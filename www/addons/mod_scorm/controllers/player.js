@@ -40,7 +40,7 @@ angular.module('mm.addons.mod_scorm')
     $scope.loadingToc = true;
 
     if (scorm.popup) {
-        // If we receive a value <= 100 we need to assume it's a percentage.
+        // Fix for bug in WS not returning %. If we receive a value <= 100 we'll assume it's a percentage.
         if (scorm.width <= 100) {
             scorm.width = scorm.width + '%';
         }
@@ -98,8 +98,7 @@ angular.module('mm.addons.mod_scorm')
                         promise = $mmaModScormHelper.createOfflineAttempt(scorm, result.attempt, attemptsData.online.length);
                     } else {
                         // Last attempt was online, verify that we can create a new online attempt. We ignore cache.
-                        promise = $mmaModScorm.getScormUserData(scorm.id, result.attempt, false, undefined, undefined, true)
-                                    .catch(function() {
+                        promise = $mmaModScorm.getScormUserData(scorm.id, result.attempt, false, undefined, true).catch(function() {
                             // Cannot communicate with the server, create an offline attempt.
                             offline = true;
                             return $mmaModScormHelper.createOfflineAttempt(scorm, result.attempt, attemptsData.online.length);
@@ -246,7 +245,7 @@ angular.module('mm.addons.mod_scorm')
         return $mmaModScorm.saveTracks(scoId, attempt, tracks, offline, scorm).then(function() {
             if (!offline) {
                 // New online attempt created, update cached data about online attempts.
-                $mmaModScorm.getAttemptCount(scorm.id, undefined, undefined, false, true);
+                $mmaModScorm.getAttemptCount(scorm.id, undefined, false, true);
             }
         });
     }

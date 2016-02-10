@@ -36,8 +36,7 @@ angular.module('mm.addons.mod_imscp', ['mm.core'])
 
 })
 
-.config(function($mmCourseDelegateProvider, $mmCoursePrefetchDelegateProvider, $mmContentLinksDelegateProvider) {
-    $mmCourseDelegateProvider.registerContentHandler('mmaModImscp', 'imscp', '$mmaModImscpHandlers.courseContent');
+.config(function($mmCourseDelegateProvider, $mmCoursePrefetchDelegateProvider) {
+    $mmCourseDelegateProvider.registerContentHandler('mmaModImscp', 'imscp', '$mmaModImscpCourseContentHandler');
     $mmCoursePrefetchDelegateProvider.registerPrefetchHandler('mmaModImscp', 'imscp', '$mmaModImscpPrefetchHandler');
-    $mmContentLinksDelegateProvider.registerLinkHandler('mmaModImscp', '$mmaModImscpHandlers.linksHandler');
 });

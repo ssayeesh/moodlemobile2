@@ -22,7 +22,7 @@ angular.module('mm.addons.mod_scorm')
  * @ngdoc service
  * @name $mmaModScormOnline
  */
-.factory('$mmaModScormOnline', function($mmSitesManager, $mmSite, $q, $mmWS, $log, mmCoreWSPrefix) {
+.factory('$mmaModScormOnline', function($mmSite, $q, $mmWS, $log, mmCoreWSPrefix) {
     $log = $log.getInstance('$mmaModScormOnline');
 
     var self = {},
@@ -34,15 +34,10 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOnline#clearBlockedScorms
-     * @param {String} [siteId] If set, clear the blocked SCORMs only for this site. Otherwise clear all SCORMs.
      * @return {Void}
      */
-    self.clearBlockedScorms = function(siteId) {
-        if (siteId) {
-            delete blockedScorms[siteId];
-        } else {
-            blockedScorms = {};
-        }
+    self.clearBlockedScorms = function() {
+        blockedScorms = {};
     };
 
     /**
@@ -63,37 +58,38 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOnline#getAttemptCount
-     * @param {String} siteId         Site ID.
      * @param {Number} scormId        SCORM ID.
-     * @param {Number} [userId]       User ID. If not defined use site's current user.
+     * @param {Number} [userId]       User ID. If not defined, current user.
      * @param {Boolean} ignoreMissing True if it should ignore attempts that haven't reported a grade/completion.
      * @param {Boolean} ignoreCache   True if it should ignore cached data (it will always fail in offline or server down).
      * @return {Promise}              Promise resolved when the attempt count is retrieved.
      */
-    self.getAttemptCount = function(siteId, scormId, userId, ignoreMissing, ignoreCache) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            userId = userId || site.getUserId();
+    self.getAttemptCount = function(scormId, userId, ignoreMissing, ignoreCache) {
+        userId = userId || $mmSite.getUserId();
 
-            var params = {
-                    scormid: scormId,
-                    userid: userId,
-                    ignoremissingcompletion: ignoreMissing ? 1 : 0
-                },
-                preSets = {
-                    cacheKey: getAttemptCountCacheKey(scormId, userId)
-                };
+        if (!$mmSite.isLoggedIn()) {
+            return $q.reject();
+        }
 
-            if (ignoreCache) {
-                preSets.getFromCache = 0;
-                preSets.emergencyCache = 0;
+        var params = {
+                scormid: scormId,
+                userid: userId,
+                ignoremissingcompletion: ignoreMissing ? 1 : 0
+            },
+            preSets = {
+                cacheKey: getAttemptCountCacheKey(scormId, userId)
+            };
+
+        if (ignoreCache) {
+            preSets.getFromCache = 0;
+            preSets.emergencyCache = 0;
+        }
+
+        return $mmSite.read('mod_scorm_get_scorm_attempt_count', params, preSets).then(function(response) {
+            if (response && typeof response.attemptscount != 'undefined') {
+                return response.attemptscount;
             }
-
-            return site.read('mod_scorm_get_scorm_attempt_count', params, preSets).then(function(response) {
-                if (response && typeof response.attemptscount != 'undefined') {
-                    return response.attemptscount;
-                }
-                return $q.reject();
-            });
+            return $q.reject();
         });
     };
 
@@ -124,51 +120,52 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOnline#getScormUserData
-     * @param {String} siteId       Site ID.
      * @param {Number} scormId      SCORM ID.
      * @param {Number} attempt      Attempt number.
      * @param {Boolean} ignoreCache True if it should ignore cached data (it will always fail in offline or server down).
      * @return {Promise}            Promise resolved when the user data is retrieved.
      */
-    self.getScormUserData = function(siteId, scormId, attempt, ignoreCache) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            var params = {
-                    scormid: scormId,
-                    attempt: attempt
-                },
-                preSets = {
-                    cacheKey: getScormUserDataCacheKey(scormId, attempt)
-                };
+    self.getScormUserData = function(scormId, attempt, ignoreCache) {
+        var params = {
+                scormid: scormId,
+                attempt: attempt
+            },
+            preSets = {
+                cacheKey: getScormUserDataCacheKey(scormId, attempt)
+            };
 
-            if (ignoreCache) {
-                preSets.getFromCache = 0;
-                preSets.emergencyCache = 0;
-            }
+        if (ignoreCache) {
+            preSets.getFromCache = 0;
+            preSets.emergencyCache = 0;
+        }
 
-            return site.read('mod_scorm_get_scorm_user_data', params, preSets).then(function(response) {
-                if (response && response.data) {
-                    // Format the response.
-                    var data = {};
-                    angular.forEach(response.data, function(sco) {
-                        var formattedDefaultData = {},
-                            formattedUserData = {};
+        if (!$mmSite.isLoggedIn()) {
+            return $q.reject();
+        }
 
-                        angular.forEach(sco.defaultdata, function(entry) {
-                            formattedDefaultData[entry.element] = entry.value;
-                        });
-                        angular.forEach(sco.userdata, function(entry) {
-                            formattedUserData[entry.element] = entry.value;
-                        });
+        return $mmSite.read('mod_scorm_get_scorm_user_data', params, preSets).then(function(response) {
+            if (response && response.data) {
+                // Format the response.
+                var data = {};
+                angular.forEach(response.data, function(sco) {
+                    var formattedDefaultData = {},
+                        formattedUserData = {};
 
-                        sco.defaultdata = formattedDefaultData;
-                        sco.userdata = formattedUserData;
-
-                        data[sco.scoid] = sco;
+                    angular.forEach(sco.defaultdata, function(entry) {
+                        formattedDefaultData[entry.element] = entry.value;
                     });
-                    return data;
-                }
-                return $q.reject();
-            });
+                    angular.forEach(sco.userdata, function(entry) {
+                        formattedUserData[entry.element] = entry.value;
+                    });
+
+                    sco.defaultdata = formattedDefaultData;
+                    sco.userdata = formattedUserData;
+
+                    data[sco.scoid] = sco;
+                });
+                return data;
+            }
+            return $q.reject();
         });
     };
 
@@ -178,16 +175,12 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOnline#invalidateAttemptCount
-     * @param {String} siteId   Site ID.
      * @param {Number} scormId  SCORM ID.
-     * @param {Number} [userId] User ID. If not defined use site's current user.
+     * @param {Number} [userId] User ID. If not defined, current user.
      * @return {Promise}        Promise resolved when the data is invalidated.
      */
-    self.invalidateAttemptCount = function(siteId, scormId, userId) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            userId = userId || site.getUserId();
-            return site.invalidateWsCacheForKey(getAttemptCountCacheKey(scormId, userId));
-        });
+    self.invalidateAttemptCount = function(scormId, userId) {
+        return $mmSite.invalidateWsCacheForKey(getAttemptCountCacheKey(scormId, userId));
     };
 
     /**
@@ -196,14 +189,11 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOnline#invalidateScormUserData
-     * @param {String} siteId   Site ID.
-     * @param {Number} scormId  SCORM ID.
-     * @return {Promise}        Promise resolved when the data is invalidated.
+     * @param {Number} scormId SCORM ID.
+     * @return {Promise}       Promise resolved when the data is invalidated.
      */
-    self.invalidateScormUserData = function(siteId, scormId) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            return site.invalidateWsCacheForKeyStartingWith(getScormUserDataCommonCacheKey(scormId));
-        });
+    self.invalidateScormUserData = function(scormId) {
+        return $mmSite.invalidateWsCacheForKeyStartingWith(getScormUserDataCommonCacheKey(scormId));
     };
 
     /**
@@ -212,15 +202,11 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOnline#isScormBlocked
-     * @param  {String} siteId   Site ID. If not set, use current site.
      * @param  {Number} scormId  SCORM ID.
      * @return {Boolean}         True if blocked, false otherwise.
      */
-    self.isScormBlocked = function(siteId, scormId) {
-        if (!blockedScorms[siteId]) {
-            return false;
-        }
-        return !!blockedScorms[siteId][scormId];
+    self.isScormBlocked = function(scormId) {
+        return !!blockedScorms[scormId];
     };
 
     /**
@@ -229,38 +215,36 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOnline#saveTracks
-     * @param  {String} siteId   Site ID. If not set, use current site.
      * @param  {Number} scormId  SCORM ID.
      * @param  {Number} scoId    Sco ID.
      * @param  {Number} attempt  Attempt number.
      * @param  {Object[]} tracks Tracking data.
      * @return {Promise}         Promise resolved when data is saved.
      */
-    self.saveTracks = function(siteId, scormId, scoId, attempt, tracks) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            var params = {
-                scoid: scoId,
-                attempt: attempt,
-                tracks: tracks
-            };
+    self.saveTracks = function(scormId, scoId, attempt, tracks) {
+        var params = {
+            scoid: scoId,
+            attempt: attempt,
+            tracks: tracks
+        };
 
-            if (!tracks || !tracks.length) {
-                return $q.when(); // Nothing to save.
+        if (!tracks || !tracks.length) {
+            return $q.when(); // Nothing to save.
+        }
+
+        if (!$mmSite.isLoggedIn()) {
+            return $q.reject();
+        }
+
+        blockedScorms[scormId] = true;
+
+        return $mmSite.write('mod_scorm_insert_scorm_tracks', params).then(function(response) {
+            if (response && response.trackids) {
+                return response.trackids;
             }
-
-            if (!blockedScorms[siteId]) {
-                blockedScorms[siteId] = {};
-            }
-            blockedScorms[siteId][scormId] = true;
-
-            return site.write('mod_scorm_insert_scorm_tracks', params).then(function(response) {
-                if (response && response.trackids) {
-                    return response.trackids;
-                }
-                return $q.reject();
-            }).finally(function() {
-                blockedScorms[siteId][scormId] = false;
-            });
+            return $q.reject();
+        }).finally(function() {
+            blockedScorms[scormId] = false;
         });
     };
 

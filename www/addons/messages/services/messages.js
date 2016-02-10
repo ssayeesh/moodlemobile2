@@ -61,41 +61,6 @@ angular.module('mm.addons.messages')
     };
 
     /**
-     * Check if messages can be deleted in current site.
-     *
-     * @module mm.addons.messages
-     * @ngdoc method
-     * @name $mmaMessages#canDeleteMessages
-     * @return {Boolean} True if can delete messages, false otherwise.
-     */
-    self.canDeleteMessages = function() {
-        return $mmSite.wsAvailable('core_message_delete_message');
-    };
-
-    /**
-     * Check if messages can be deleted in current site.
-     *
-     * @module mm.addons.messages
-     * @ngdoc method
-     * @name $mmaMessages#deleteMessage
-     * @param {Number} id       Message ID.
-     * @param {Number} read     1 if message is read, 0 otherwise.
-     * @param {Number} [userId] User we want to delete the message for. If not defined, use current user.
-     * @return {Promise}        Promise resolved when the message has been deleted.
-     */
-    self.deleteMessage = function(id, read, userId) {
-        userId = userId || $mmSite.getUserId();
-        var params = {
-                messageid: id,
-                userid: userId,
-                read: read
-            };
-        return $mmSite.write('core_message_delete_message', params).then(function() {
-            return self.invalidateDiscussionCache(userId);
-        });
-    };
-
-    /**
      * Get all the contacts of the current user.
      *
      * @module mm.addons.messages
@@ -440,12 +405,7 @@ angular.module('mm.addons.messages')
             newestfirst: 1,
         });
 
-        return $mmSite.read('core_message_get_messages', params, presets).then(function(response) {
-            angular.forEach(response.messages, function(message) {
-                message.read = params.read == 0 ? 0 : 1;
-            });
-            return response;
-        });
+        return $mmSite.read('core_message_get_messages', params, presets);
     };
 
     /**
@@ -635,30 +595,26 @@ angular.module('mm.addons.messages')
      * @return {Promise} Resolved when enabled, otherwise rejected.
      * @protected
      */
-    self._isMessagingEnabled = function(siteId) {
-        siteId = siteId || $mmSite.getId();
+    self._isMessagingEnabled = function() {
+        var enabled = $mmSite.canUseAdvancedFeature('messaging', 'unknown');
 
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            var enabled = site.canUseAdvancedFeature('messaging', 'unknown');
+        if (enabled === 'unknown') {
+            // On older version we cannot check other than calling a WS. If the request
+            // fails there is a very high chance that messaging is disabled.
+            $log.debug('Using WS call to check if messaging is enabled.');
+            return $mmSite.read('core_message_search_contacts', {
+                searchtext: 'CheckingIfMessagingIsEnabled',
+                onlymycourses: 0
+            }, {
+                emergencyCache: false,
+                cacheKey: self._getCacheKeyForEnabled()
+            });
+        }
 
-            if (enabled === 'unknown') {
-                // On older version we cannot check other than calling a WS. If the request
-                // fails there is a very high chance that messaging is disabled.
-                $log.debug('Using WS call to check if messaging is enabled.');
-                return site.read('core_message_search_contacts', {
-                    searchtext: 'CheckingIfMessagingIsEnabled',
-                    onlymycourses: 0
-                }, {
-                    emergencyCache: false,
-                    cacheKey: self._getCacheKeyForEnabled()
-                });
-            }
-
-            if (enabled) {
-                return true;
-            }
-            return $q.reject();
-        });
+        if (enabled) {
+            return $q.when(true);
+        }
+        return $q.reject();
     };
 
    /**
@@ -692,30 +648,30 @@ angular.module('mm.addons.messages')
     };
 
     /**
-     * Returns whether or not the plugin is enabled in a certain site.
+     * Returns whether or not the plugin is enabled for the current site.
      *
      * Do not abuse this method.
      *
      * @module mm.addons.messages
      * @ngdoc method
      * @name $mmaMessages#isPluginEnabled
-     * @param  {String} [siteId] Site ID. If not defined, current site.
-     * @return {Promise}         Promise resolved with true if enabled, rejected or resolved with false otherwise.
+     * @return {Promise} Rejected when not enabled.
      */
-    self.isPluginEnabled = function(siteId) {
-        siteId = siteId || $mmSite.getId();
+    self.isPluginEnabled = function() {
+        var infos,
+            enabled = $q.when(true);
 
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            if (!site.canUseAdvancedFeature('messaging')) {
-                return false;
-            } else if (!site.wsAvailable('core_message_get_messages')) {
-                return false;
-            } else {
-                return self._isMessagingEnabled(siteId).then(function() {
-                    return true;
-                });
-            }
-        });
+        if (!$mmSite.isLoggedIn()) {
+            enabled = $q.reject();
+        } else if (!$mmSite.canUseAdvancedFeature('messaging')) {
+            enabled = $q.reject();
+        } else if (!$mmSite.wsAvailable('core_message_get_messages')) {
+            enabled = $q.reject();
+        } else {
+            enabled = self._isMessagingEnabled();
+        }
+
+        return enabled;
     };
 
     /**

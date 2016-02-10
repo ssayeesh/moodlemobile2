@@ -36,7 +36,6 @@ angular.module('mm.addons.mod_lti', [])
 
 })
 
-.config(function($mmCourseDelegateProvider, $mmContentLinksDelegateProvider) {
-    $mmCourseDelegateProvider.registerContentHandler('mmaModLti', 'lti', '$mmaModLtiHandlers.courseContent');
-    $mmContentLinksDelegateProvider.registerLinkHandler('mmaModLti', '$mmaModLtiHandlers.linksHandler');
+.config(function($mmCourseDelegateProvider) {
+    $mmCourseDelegateProvider.registerContentHandler('mmaModLti', 'lti', '$mmaModLtiCourseContentHandler');
 });

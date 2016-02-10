@@ -21,7 +21,7 @@ angular.module('mm.addons.mod_assign')
  * @ngdoc controller
  * @name $mmaModAssign
  */
-.factory('$mmaModAssign', function($mmSite, $q, $mmUser, $mmSitesManager) {
+.factory('$mmaModAssign', function($mmSite, $q, $mmUser) {
     var self = {};
 
     /**
@@ -179,20 +179,15 @@ angular.module('mm.addons.mod_assign')
     };
 
     /**
-     * Check if assignments plugin is enabled in a certain site.
+     * Check if assignments plugin is enabled.
      *
      * @module mm.addons.mod_assign
      * @ngdoc method
      * @name $mmaModAssign#isPluginEnabled
-     * @param  {String} [siteId] Site ID. If not defined, current site.
-     * @return {Promise}         Promise resolved with true if plugin is enabled, rejected or resolved with false otherwise.
+     * @return {Boolean} True if plugin is enabled, false otherwise.
      */
-    self.isPluginEnabled = function(siteId) {
-        siteId = siteId || $mmSite.getId();
-
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            return site.wsAvailable('mod_assign_get_assignments') && site.wsAvailable('mod_assign_get_submissions');
-        });
+    self.isPluginEnabled = function() {
+        return $mmSite.wsAvailable('mod_assign_get_assignments') && $mmSite.wsAvailable('mod_assign_get_submissions');
     };
 
     return self;

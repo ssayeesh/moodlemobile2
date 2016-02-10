@@ -36,8 +36,7 @@ angular.module('mm.addons.mod_resource', ['mm.core'])
 
 })
 
-.config(function($mmCourseDelegateProvider, $mmCoursePrefetchDelegateProvider, $mmContentLinksDelegateProvider) {
-    $mmCourseDelegateProvider.registerContentHandler('mmaModResource', 'resource', '$mmaModResourceHandlers.courseContent');
+.config(function($mmCourseDelegateProvider, $mmCoursePrefetchDelegateProvider) {
+    $mmCourseDelegateProvider.registerContentHandler('mmaModResource', 'resource', '$mmaModResourceCourseContentHandler');
     $mmCoursePrefetchDelegateProvider.registerPrefetchHandler('mmaModResource', 'resource', '$mmaModResourcePrefetchHandler');
-    $mmContentLinksDelegateProvider.registerLinkHandler('mmaModResource', '$mmaModResourceHandlers.linksHandler');
 });

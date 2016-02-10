@@ -61,7 +61,6 @@ angular.module('mm.core', ['pascalprecht.translate'])
                 state: null,
                 params: null
             },
-            cache: false,
             controller: function($scope, $state, $stateParams, $mmSite, $mmSitesManager, $ionicHistory) {
 
                 $ionicHistory.nextViewOptions({disableBack: true});

@@ -22,17 +22,16 @@ angular.module('mm.core.course')
  * @name mmCourseSectionCtrl
  */
 .controller('mmCourseSectionCtrl', function($mmCourseDelegate, $mmCourse, $mmUtil, $scope, $stateParams, $translate, $mmSite,
-            $mmEvents, $ionicScrollDelegate, $mmCourses, $q, mmCoreEventCompletionModuleViewed, $controller) {
+            $mmEvents, $ionicScrollDelegate, $mmCourses, $q, mmCoreEventCompletionModuleViewed) {
 
     // Default values are course 1 (front page) and all sections.
-    var courseId = $stateParams.cid || 1,
-        sectionId = $stateParams.sectionid || -1,
-        moduleId = $stateParams.mid;
+    var courseid = $stateParams.courseid || 1,
+        sectionid = $stateParams.sectionid || -1;
 
-    $scope.sitehome = (courseId === 1); // Are we visiting the site home?
+    $scope.sitehome = (courseid === 1); // Are we visiting the site home?
     $scope.sections = []; // Reset scope.sections, otherwise an error is shown in console with tablet view.
 
-    if (sectionId < 0) {
+    if (sectionid < 0) {
         // Special scenario, we want all sections.
         if ($scope.sitehome) {
             $scope.title = $translate.instant('mma.frontpage.sitehome');
@@ -43,15 +42,15 @@ angular.module('mm.core.course')
     }
 
     // Convenience function to fetch section(s).
-    function loadContent(sectionId) {
-        return $mmCourses.getUserCourse(courseId, true).catch(function() {
+    function loadContent(sectionid) {
+        return $mmCourses.getUserCourse(courseid, true).catch(function() {
             // User not enrolled in the course or an error occurred, ignore the error.
         }).then(function(course) {
             var promise;
             if (course && course.enablecompletion === false) {
                 promise = $q.when([]); // Completion not enabled, return empty array.
             } else {
-                promise = $mmCourse.getActivitiesCompletionStatus(courseId).catch(function() {
+                promise = $mmCourse.getActivitiesCompletionStatus(courseid).catch(function() {
                     return []; // If fail, return empty array (as if there was no completion).
                 });
             }
@@ -60,12 +59,12 @@ angular.module('mm.core.course')
                 var promise,
                     sectionnumber;
 
-                if (sectionId < 0) {
+                if (sectionid < 0) {
                     sectionnumber = 0;
-                    promise = $mmCourse.getSections(courseId);
+                    promise = $mmCourse.getSections(courseid);
                 } else {
-                    sectionnumber = sectionId;
-                    promise = $mmCourse.getSection(courseId, sectionId).then(function(section) {
+                    sectionnumber = sectionid;
+                    promise = $mmCourse.getSection(courseid, sectionid).then(function(section) {
                         $scope.title = section.name;
                         $scope.summary = section.summary;
                         return [section];
@@ -87,20 +86,11 @@ angular.module('mm.core.course')
 
                         angular.forEach(section.modules, function(module) {
                             module._controller =
-                                    $mmCourseDelegate.getContentHandlerControllerFor(module.modname, module, courseId, section.id);
+                                    $mmCourseDelegate.getContentHandlerControllerFor(module.modname, module, courseid, section.id);
                             // Check if activity has completions and if it's marked.
                             var status = statuses[module.id];
                             if (typeof status != 'undefined') {
                                 module.completionstatus = status;
-                            }
-
-                            if (module.id == moduleId) {
-                                // This is the module we're looking for. Open it.
-                                var scope = $scope.$new();
-                                $controller(module._controller, {$scope: scope});
-                                if (scope.action) {
-                                    scope.action();
-                                }
                             }
                         });
                     });
@@ -110,7 +100,7 @@ angular.module('mm.core.course')
 
                     // Add log in Moodle.
                     $mmSite.write('core_course_view_course', {
-                        courseid: courseId,
+                        courseid: courseid,
                         sectionnumber: sectionnumber
                     });
                 }, function(error) {
@@ -124,13 +114,13 @@ angular.module('mm.core.course')
         });
     }
 
-    loadContent(sectionId).finally(function() {
+    loadContent(sectionid).finally(function() {
         $scope.sectionLoaded = true;
     });
 
     $scope.doRefresh = function() {
-        $mmCourse.invalidateSections(courseId).finally(function() {
-            loadContent(sectionId).finally(function() {
+        $mmCourse.invalidateSections(courseid).finally(function() {
+            loadContent(sectionid).finally(function() {
                 $scope.$broadcast('scroll.refreshComplete');
             });
         });
@@ -144,7 +134,7 @@ angular.module('mm.core.course')
         }
         $scope.sectionLoaded = false;
         $scope.sections = [];
-        loadContent(sectionId).finally(function() {
+        loadContent(sectionid).finally(function() {
             $scope.sectionLoaded = true;
             $scope.loadingPaddingTop = 0;
         });
@@ -152,14 +142,14 @@ angular.module('mm.core.course')
 
     // Completion changed for at least one module. Invalidate data and re-load it.
     $scope.completionChanged = function() {
-        $mmCourse.invalidateSections(courseId).finally(function() {
+        $mmCourse.invalidateSections(courseid).finally(function() {
             refreshAfterCompletionChange();
         });
     };
 
     // Listen for viewed modules. If an automatic completion module is viewed, refresh the whole list.
     var observer = $mmEvents.on(mmCoreEventCompletionModuleViewed, function(cid) {
-        if (cid === courseId) {
+        if (cid === courseid) {
             refreshAfterCompletionChange();
         }
     });

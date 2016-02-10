@@ -21,8 +21,7 @@ angular.module('mm.core.login')
  * @ngdoc controller
  * @name mmLoginReconnectCtrl
  */
-.controller('mmLoginReconnectCtrl', function($scope, $state, $stateParams, $mmSitesManager, $mmApp, $mmUtil, $ionicHistory,
-            $mmLoginHelper) {
+.controller('mmLoginReconnectCtrl', function($scope, $state, $stateParams, $mmSitesManager, $mmApp, $mmUtil, $ionicHistory) {
 
     var infositeurl = $stateParams.infositeurl; // Siteurl in site info. It might be different than siteurl (http/https).
     $scope.siteurl = $stateParams.siteurl;
@@ -64,7 +63,7 @@ angular.module('mm.core.login')
                 $mmSitesManager.updateSiteInfoByUrl(infositeurl, username).finally(function() {
                     delete $scope.credentials; // Delete password from the scope.
                     $ionicHistory.nextViewOptions({disableBack: true});
-                    return $mmLoginHelper.goToSiteInitialPage();
+                    $state.go('site.mm_courses');
                 });
             }, function(error) {
                 // Site deleted? Go back to login page.

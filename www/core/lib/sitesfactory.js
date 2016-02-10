@@ -766,7 +766,7 @@ angular.module('mm.core')
             }
             var siteurl = $mmText.removeProtocolAndWWW(this.siteurl);
             url = $mmText.removeProtocolAndWWW(url);
-            return url.indexOf(siteurl) == 0;
+            return url.indexOf(siteurl) > -1;
         };
 
         /**

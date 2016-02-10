@@ -21,7 +21,7 @@ angular.module('mm.addons.mod_resource')
  * @ngdoc service
  * @name $mmaModResource
  */
-.factory('$mmaModResource', function($mmFilepool, $mmSite, $mmUtil, $mmFS, $http, $log, $q, $sce, $mmApp, $mmSitesManager,
+.factory('$mmaModResource', function($mmFilepool, $mmSite, $mmUtil, $mmFS, $http, $log, $q, $sce, $mmApp,
             mmaModResourceComponent) {
     $log = $log.getInstance('$mmaModResource');
 
@@ -321,23 +321,6 @@ angular.module('mm.addons.mod_resource')
      */
     self.isFileDownloadable = function(file) {
         return file.type === 'file';
-    };
-
-    /**
-     * Check if resource plugin is enabled in a certain site.
-     *
-     * @module mm.addons.mod_resource
-     * @ngdoc method
-     * @name $mmaModResource#isPluginEnabled
-     * @param  {String} [siteId] Site ID. If not defined, current site.
-     * @return {Promise}         Promise resolved with true if plugin is enabled, rejected or resolved with false otherwise.
-     */
-    self.isPluginEnabled = function(siteId) {
-        siteId = siteId || $mmSite.getId();
-
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            return site.canDownloadFiles();
-        });
     };
 
     /**

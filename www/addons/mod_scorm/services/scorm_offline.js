@@ -96,7 +96,7 @@ angular.module('mm.addons.mod_scorm')
  * @ngdoc service
  * @name $mmaModScormOffline
  */
-.factory('$mmaModScormOffline', function($mmSite, $mmUtil, $q, $log, $mmSitesManager, mmaModScormOfflineAttemptsStore,
+.factory('$mmaModScormOffline', function($mmSite, $mmUtil, $q, $log, mmaModScormOfflineAttemptsStore,
             mmaModScormOfflineTracksStore) {
     $log = $log.getInstance('$mmaModScormOffline');
 
@@ -111,65 +111,60 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#changeAttemptNumber
-     * @param {String} siteId     Site ID.
      * @param {Object} scormId    SCORM ID.
      * @param {Number} attempt    Number of the attempt to change.
      * @param {Number} newAttempt New attempt number.
-     * @param {Number} [userId]   User ID. If not defined use site's current user.
+     * @param {Number} [userId]   User ID. If not defined, current user.
      * @return {Promise}          Promise resolved when the attempt number changes.
      */
-    self.changeAttemptNumber = function(siteId, scormId, attempt, newAttempt, userId) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            $log.debug('Change attempt number from ' + attempt + ' to ' + newAttempt + ' in SCORM ' + scormId);
-            userId = userId || site.getUserId();
+    self.changeAttemptNumber = function(scormId, attempt, newAttempt, userId) {
+        $log.debug('Change attempt number from ' + attempt + ' to ' + newAttempt + ' in SCORM ' + scormId);
+        userId = userId || $mmSite.getUserId();
 
-            var db = site.getDb(),
-                newEntry = {
-                    scormid: scormId,
-                    userid: userId,
-                    attempt: newAttempt,
-                    timemodified: $mmUtil.timestamp()
-                };
+        var db = $mmSite.getDb(),
+            newEntry = {
+                scormid: scormId,
+                userid: userId,
+                attempt: newAttempt,
+                timemodified: $mmUtil.timestamp()
+            };
 
-            if (!blockedScorms[siteId]) {
-                blockedScorms[siteId] = {};
-            }
-            blockedScorms[siteId][scormId] = true; // Block the SCORM so it can't be synced.
+        blockedScorms[scormId] = true; // Block the SCORM so it can't be synced.
 
-            // Get current data.
-            return db.get(mmaModScormOfflineAttemptsStore, [scormId, userId, attempt]).then(function(entry) {
-                newEntry.timecreated = entry.timecreated;
-                newEntry.courseid = entry.courseid;
+        // Get current data.
+        return db.get(mmaModScormOfflineAttemptsStore, [scormId, userId, attempt]).then(function(entry) {
+            newEntry.timecreated = entry.timecreated;
+            newEntry.courseid = entry.courseid;
 
-                // Insert new attempt.
-                return db.insert(mmaModScormOfflineAttemptsStore, newEntry).then(function() {
-                    // Copy tracking data to the new attempt.
-                    return self.getScormStoredData(siteId, scormId, attempt, userId).then(function(entries) {
-                        var promises = [];
-                        angular.forEach(entries, function(entry) {
-                            entry.attempt = newAttempt;
-                            entry.synced = 0;
-                            promises.push(db.insert(mmaModScormOfflineTracksStore, entry));
-                        });
+            // Insert new attempt.
+            return db.insert(mmaModScormOfflineAttemptsStore, newEntry).then(function() {
+                // Copy tracking data to the new attempt.
+                return self.getScormStoredData(scormId, attempt, userId).then(function(entries) {
+                    var promises = [];
+                    angular.forEach(entries, function(entry) {
+                        entry.attempt = newAttempt;
+                        entry.synced = 0;
+                        promises.push(db.insert(mmaModScormOfflineTracksStore, entry));
+                    });
 
-                        return $mmUtil.allPromises(promises).then(function() {
-                            // All entries inserted. Delete the old attempt.
-                            return self.deleteAttempt(siteId, scormId, attempt).catch(function() {
-                                // The delete failed, it shouldn't happen. Let's retry once.
-                                return self.deleteAttempt(siteId, scormId, attempt).catch(function() {});
-                            });
-                        });
-                    }).catch(function() {
-                        // Failed to get the data, remove the new attempt.
-                        return self.deleteAttempt(siteId, scormId, newAttempt).then(function() {
-                            return $q.reject();
+                    return $mmUtil.allPromises(promises).then(function() {
+                        // All entries inserted. Delete the old attempt.
+                        return self.deleteAttempt(scormId, attempt).catch(function() {
+                            // The delete failed, it shouldn't happen. Let's retry once.
+                            return self.deleteAttempt(scormId, attempt).catch(function() {});
                         });
                     });
+                }).catch(function() {
+                    // Failed to get the data, remove the new attempt.
+                    return self.deleteAttempt(scormId, newAttempt).then(function() {
+                        return $q.reject();
+                    });
                 });
-            }).finally(function() {
-                blockedScorms[siteId][scormId] = false; // Unblock the SCORM.
             });
+        }).finally(function() {
+            blockedScorms[scormId] = false; // Unblock the SCORM.
         });
+
     };
 
     /**
@@ -178,15 +173,10 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#clearBlockedScorms
-     * @param {String} [siteId] If set, clear the blocked SCORMs only for this site. Otherwise clear all SCORMs.
      * @return {Void}
      */
-    self.clearBlockedScorms = function(siteId) {
-        if (siteId) {
-            delete blockedScorms[siteId];
-        } else {
-            blockedScorms = {};
-        }
+    self.clearBlockedScorms = function() {
+        blockedScorms = {};
     };
 
     /**
@@ -195,55 +185,49 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#createNewAttempt
-     * @param {String} siteId     Site ID.
      * @param {Object} scorm      SCORM.
-     * @param {Number} [userId]   User ID. If not defined use site's current user.
+     * @param {Number} [userId]   User ID. If not defined, current user.
      * @param {Number} attempt    Number of the new attempt.
      * @param {Object} userData   User data to store in the attempt.
      * @param {Object} [snapshot] Optional. Snapshot to store in the attempt.
      * @return {Promise}          Promise resolved when the new attempt is created.
      */
-    self.createNewAttempt = function(siteId, scorm, userId, attempt, userData, snapshot) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            $log.debug('Creating new offline attempt ' + attempt + ' in SCORM ' + scorm.id);
-            userId = userId || site.getUserId();
+    self.createNewAttempt = function(scorm, userId, attempt, userData, snapshot) {
+        $log.debug('Creating new offline attempt ' + attempt + ' in SCORM ' + scorm.id);
+        userId = userId || $mmSite.getUserId();
 
-            if (!blockedScorms[siteId]) {
-                blockedScorms[siteId] = {};
-            }
-            blockedScorms[siteId][scorm.id] = true; // Block the SCORM so it can't be synced.
+        blockedScorms[scorm.id] = true; // Block the SCORM so it can't be synced.
 
-            // Create attempt in DB.
-            var db = site.getDb(),
-                entry = {
-                    scormid: scorm.id,
-                    userid: userId,
-                    attempt: attempt,
-                    courseid: scorm.course,
-                    timecreated: $mmUtil.timestamp(),
-                    timemodified: $mmUtil.timestamp()
-                };
+        // Create attempt in DB.
+        var db = $mmSite.getDb(),
+            entry = {
+                scormid: scorm.id,
+                userid: userId,
+                attempt: attempt,
+                courseid: scorm.course,
+                timecreated: $mmUtil.timestamp(),
+                timemodified: $mmUtil.timestamp()
+            };
 
-            if (snapshot) {
-                // Save a snapshot of the data we had when we created the attempt.
-                // Remove the default data, we don't want to store it.
-                entry.snapshot = removeDefaultData(snapshot);
-            }
+        if (snapshot) {
+            // Save a snapshot of the data we had when we created the attempt.
+            // Remove the default data, we don't want to store it.
+            entry.snapshot = removeDefaultData(snapshot);
+        }
 
-            return db.insert(mmaModScormOfflineAttemptsStore, entry).then(function() {
-                // Store all the data in userData.
-                var promises = [];
-                angular.forEach(userData, function(sco) {
-                    var tracks = [];
-                    angular.forEach(sco.userdata, function(value, element) {
-                        tracks.push({element: element, value: value});
-                    });
-                    promises.push(self.saveTracks(siteId, scorm, sco.scoid, attempt, tracks, userData));
+        return db.insert(mmaModScormOfflineAttemptsStore, entry).then(function() {
+            // Store all the data in userData.
+            var promises = [];
+            angular.forEach(userData, function(sco) {
+                var tracks = [];
+                angular.forEach(sco.userdata, function(value, element) {
+                    tracks.push({element: element, value: value});
                 });
-                return $q.all(promises);
-            }).finally(function() {
-                blockedScorms[siteId][scorm.id] = false; // Unblock the SCORM.
+                promises.push(self.saveTracks(scorm, sco.scoid, attempt, tracks, userData));
             });
+            return $q.all(promises);
+        }).finally(function() {
+            blockedScorms[scorm.id] = false; // Unblock the SCORM.
         });
     };
 
@@ -253,32 +237,29 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#deleteAttempt
-     * @param {String} siteId   Site ID.
      * @param {Number} scormId  SCORM ID.
      * @param {Number} attempt  Attempt number.
-     * @param {Number} [userId] User ID. If not defined use site's current user.
+     * @param {Number} [userId] User ID. If not defined, current user.
      * @return {Promise}        Promise resolved when all the data has been deleted.
      */
-    self.deleteAttempt = function(siteId, scormId, attempt, userId) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            $log.debug('Delete offline attempt ' + attempt + ' in SCORM ' + scormId);
-            userId = userId || site.getUserId();
+    self.deleteAttempt = function(scormId, attempt, userId) {
+        $log.debug('Delete offline attempt ' + attempt + ' in SCORM ' + scormId);
+        userId = userId || $mmSite.getUserId();
 
-            return self.getScormStoredData(siteId, scormId, attempt, userId).then(function(entries) {
-                var promises = [],
-                    db = site.getDb();
+        return self.getScormStoredData(scormId, attempt, userId).then(function(entries) {
+            var promises = [],
+                db = $mmSite.getDb();
 
-                // Delete all the tracks.
-                angular.forEach(entries, function(entry) {
-                    var entryId = [entry.userid, entry.scormid, entry.scoid, entry.attempt, entry.element];
-                    promises.push(db.remove(mmaModScormOfflineTracksStore, entryId));
-                });
-
-                // Delete the attempt.
-                promises.push(db.remove(mmaModScormOfflineAttemptsStore, [scormId, userId, attempt]));
-
-                return $q.all(promises);
+            // Delete all the tracks.
+            angular.forEach(entries, function(entry) {
+                var entryId = [entry.userid, entry.scormid, entry.scoid, entry.attempt, entry.element];
+                promises.push(db.remove(mmaModScormOfflineTracksStore, entryId));
             });
+
+            // Delete the attempt.
+            promises.push(db.remove(mmaModScormOfflineAttemptsStore, [scormId, userId, attempt]));
+
+            return $q.all(promises);
         });
     };
 
@@ -346,24 +327,21 @@ angular.module('mm.addons.mod_scorm')
     }
 
     /**
-     * Get all the offline attempts in a certain site.
+     * Get all the offline attempts in current site.
      *
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#getAllAttempts
-     * @param {String} [siteId] Site ID. If not set, use current site.
-     * @return {Promise}        Promise resolved when the offline attempts are retrieved.
+     * @return {Promise} Promise resolved when the offline attempts are retrieved.
      */
-    self.getAllAttempts = function(siteId) {
-        siteId = siteId || $mmSite.getId();
+    self.getAllAttempts = function() {
+        var db = $mmSite.getDb();
+        if (!db) {
+            // No current site, return empty array.
+            return $q.when([]);
+        }
 
-        return $mmSitesManager.getSiteDb(siteId).then(function(db) {
-            if (!db) {
-                return $q.reject();
-            }
-
-            return db.getAll(mmaModScormOfflineAttemptsStore);
-        });
+        return db.getAll(mmaModScormOfflineAttemptsStore);
     };
 
     /**
@@ -372,19 +350,16 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#getAttempts
-     * @param {String} siteId   Site ID.
      * @param {Number} scormId  SCORM ID.
-     * @param {Number} [userId] User ID. If not defined use site's current user.
+     * @param {Number} [userId] User ID. If not defined, current user.
      * @return {Promise}        Promise resolved when the offline attempts are retrieved.
      */
-    self.getAttempts = function(siteId, scormId, userId) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            userId = userId || site.getUserId();
+    self.getAttempts = function(scormId, userId) {
+        userId = userId || $mmSite.getUserId();
 
-            var db = site.getDb();
-            return db.whereEqual(mmaModScormOfflineAttemptsStore, 'scormAndUser', [scormId, userId]).then(function(attempts) {
-                return attempts;
-            });
+        var db = $mmSite.getDb();
+        return db.whereEqual(mmaModScormOfflineAttemptsStore, 'scormAndUser', [scormId, userId]).then(function(attempts) {
+            return attempts;
         });
     };
 
@@ -394,21 +369,18 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#getAttemptSnapshot
-     * @param {String} siteId   Site ID.
      * @param {Number} scormId  SCORM ID.
      * @param {Number} attempt  Attempt number.
-     * @param {Number} [userId] User ID. If not defined use site's current user.
+     * @param {Number} [userId] User ID. If not defined, current user.
      * @return {Promise}        Promise resolved with the snapshot or undefined if no snapshot.
      */
-    self.getAttemptSnapshot = function(siteId, scormId, attempt, userId) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            userId = userId || site.getUserId();
+    self.getAttemptSnapshot = function(scormId, attempt, userId) {
+        userId = userId || $mmSite.getUserId();
 
-            return site.getDb().get(mmaModScormOfflineAttemptsStore, [scormId, userId, attempt]).catch(function() {
-                return {}; // Attempt not found.
-            }).then(function(entry) {
-                return entry.snapshot;
-            });
+        return $mmSite.getDb().get(mmaModScormOfflineAttemptsStore, [scormId, userId, attempt]).catch(function() {
+            return {}; // Attempt not found.
+        }).then(function(entry) {
+            return entry.snapshot;
         });
     };
 
@@ -418,21 +390,18 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#getAttemptCreationTime
-     * @param {String} siteId   Site ID.
      * @param {Number} scormId  SCORM ID.
      * @param {Number} attempt  Attempt number.
-     * @param {Number} [userId] User ID. If not defined use site's current user.
+     * @param {Number} [userId] User ID. If not defined, current user.
      * @return {Promise}        Promise resolved with time the attempt was created.
      */
-    self.getAttemptCreationTime = function(siteId, scormId, attempt, userId) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            userId = userId || site.getUserId();
+    self.getAttemptCreationTime = function(scormId, attempt, userId) {
+        userId = userId || $mmSite.getUserId();
 
-            return site.getDb().get(mmaModScormOfflineAttemptsStore, [scormId, userId, attempt]).catch(function() {
-                return {}; // Attempt not found.
-            }).then(function(entry) {
-                return entry.timecreated;
-            });
+        return $mmSite.getDb().get(mmaModScormOfflineAttemptsStore, [scormId, userId, attempt]).catch(function() {
+            return {}; // Attempt not found.
+        }).then(function(entry) {
+            return entry.timecreated;
         });
     };
 
@@ -442,29 +411,26 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#getScormStoredData
-     * @param {String} siteId            Site ID.
      * @param {Number} scormId           SCORM ID.
+     * @param {Number} [userId]          User ID. If not defined, current user.
      * @param {Number} attempt           Attempt number.
-     * @param {Number} [userId]          User ID. If not defined use site's current user.
      * @param {Boolean} excludeSynced    True if it should only return not synced entries.
      * @param {Boolean} excludeNotSynced True if it should only return synced entries.
      * @return {Promise}                 Promise resolved with the entries.
      */
-    self.getScormStoredData = function(siteId, scormId, attempt, userId, excludeSynced, excludeNotSynced) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            userId = userId || site.getUserId();
+    self.getScormStoredData = function(scormId, attempt, userId, excludeSynced, excludeNotSynced) {
+        userId = userId || $mmSite.getUserId();
 
-            var where;
+        var where;
 
-            if (excludeSynced && excludeNotSynced) {
-                return $q.when([]);
-            } else if (excludeSynced || excludeNotSynced) {
-                where = ['scormUserAttemptSynced', '=', [scormId, userId, attempt, excludeNotSynced ? 1 : 0]];
-            } else {
-                where = ['scormUserAttempt', '=', [scormId, userId, attempt]];
-            }
-            return site.getDb().query(mmaModScormOfflineTracksStore, where);
-        });
+        if (excludeSynced && excludeNotSynced) {
+            return $q.when([]);
+        } else if (excludeSynced || excludeNotSynced) {
+            where = ['scormUserAttemptSynced', '=', [scormId, userId, attempt, excludeNotSynced ? 1 : 0]];
+        } else {
+            where = ['scormUserAttempt', '=', [scormId, userId, attempt]];
+        }
+        return $mmSite.getDb().query(mmaModScormOfflineTracksStore, where);
     };
 
     /**
@@ -473,114 +439,110 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#getScormUserData
-     * @param {String} siteId   Site ID.
      * @param {Number} scormId  SCORM ID.
      * @param {Number} attempt  Attempt number.
-     * @param {Number} [userId] User ID. If not defined use site's current user.
+     * @param {Number} [userId] User ID. If not defined, current user.
      * @param {Object[]} scos   SCOs returned by $mmaModScorm#getScos. Required.
      * @return {Promise}        Promise resolved when the user data is retrieved.
      */
-    self.getScormUserData = function(siteId, scormId, attempt, userId, scos) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            userId = userId || site.getUserId();
+    self.getScormUserData = function(scormId, attempt, userId, scos) {
+        userId = userId || $mmSite.getUserId();
 
-            // Get user data. Ordering when using a compound index is complex, so we won't order by scoid.
-            return self.getScormStoredData(siteId, scormId, attempt, userId).then(function(entries) {
-                var response = {},
-                    launchUrls = getLaunchUrlsFromScos(scos),
-                    userId = site.getUserId(),
-                    username = site.getInfo().username,
-                    fullName = site.getInfo().fullname;
+        // Get user data. Ordering when using a compound index is complex, so we won't order by scoid.
+        return self.getScormStoredData(scormId, attempt, userId).then(function(entries) {
+            var response = {},
+                launchUrls = getLaunchUrlsFromScos(scos),
+                userId = $mmSite.getUserId(),
+                username = $mmSite.getInfo().username,
+                fullName = $mmSite.getInfo().fullname;
 
-                // Gather user data retrieved from DB, grouping it by scoid.
-                angular.forEach(entries, function(entry) {
-                    var scoid = entry.scoid;
-                    if (!response[scoid]) {
-                        // Initialize SCO.
-                        response[scoid] = {
+            // Gather user data retrieved from DB, grouping it by scoid.
+            angular.forEach(entries, function(entry) {
+                var scoid = entry.scoid;
+                if (!response[scoid]) {
+                    // Initialize SCO.
+                    response[scoid] = {
+                        scoid: scoid,
+                        userdata: {
+                            userid: userId,
                             scoid: scoid,
-                            userdata: {
-                                userid: userId,
-                                scoid: scoid,
-                                timemodified: 0
-                            }
-                        };
-                    }
-                    response[scoid].userdata[entry.element] = entry.value;
-                    if (entry.timemodified > response[scoid].userdata.timemodified) {
-                        response[scoid].userdata.timemodified = entry.timemodified;
-                    }
-                });
-
-                // Format each user data retrieved.
-                angular.forEach(response, function(sco) {
-                    sco.userdata = formatInteractions(sco.userdata);
-                });
-
-                // Create empty entries for the SCOs without user data stored.
-                angular.forEach(scos, function(sco) {
-                    if (!response[sco.id]) {
-                        response[sco.id] = {
-                            scoid: sco.id,
-                            userdata: {
-                                status: '',
-                                score_raw: ''
-                            }
-                        };
-                    }
-                });
-
-                // Calculate defaultdata.
-                angular.forEach(response, function(sco) {
-                    sco.defaultdata = {};
-                    sco.defaultdata['cmi.core.student_id'] = username;
-                    sco.defaultdata['cmi.core.student_name'] = fullName;
-                    sco.defaultdata['cmi.core.lesson_mode'] = 'normal'; // Overridden in player.
-                    sco.defaultdata['cmi.core.credit'] = 'credit'; // Overridden in player.
-                    if (sco.userdata.status === '') {
-                        sco.defaultdata['cmi.core.entry'] = 'ab-initio';
-                    } else if (sco.userdata['cmi.core.exit'] === 'suspend') {
-                        sco.defaultdata['cmi.core.entry'] = 'resume';
-                    } else {
-                        sco.defaultdata['cmi.core.entry'] = '';
-                    }
-                    sco.defaultdata['cmi.student_data.mastery_score'] = scormIsset(sco.userdata, 'masteryscore');
-                    sco.defaultdata['cmi.student_data.max_time_allowed'] = scormIsset(sco.userdata, 'max_time_allowed');
-                    sco.defaultdata['cmi.student_data.time_limit_action'] = scormIsset(sco.userdata, 'time_limit_action');
-                    sco.defaultdata['cmi.core.total_time'] = scormIsset(sco.userdata, 'cmi.core.total_time', '00:00:00');
-                    sco.defaultdata['cmi.launch_data'] = launchUrls[sco.scoid];
-
-                    // Now handle standard userdata items.
-                    sco.defaultdata['cmi.core.lesson_location'] = scormIsset(sco.userdata, 'cmi.core.lesson_location');
-                    sco.defaultdata['cmi.core.lesson_status'] = scormIsset(sco.userdata, 'cmi.core.lesson_status');
-                    sco.defaultdata['cmi.core.score.raw'] = scormIsset(sco.userdata, 'cmi.core.score.raw');
-                    sco.defaultdata['cmi.core.score.max'] = scormIsset(sco.userdata, 'cmi.core.score.max');
-                    sco.defaultdata['cmi.core.score.min'] = scormIsset(sco.userdata, 'cmi.core.score.min');
-                    sco.defaultdata['cmi.core.exit'] = scormIsset(sco.userdata, 'cmi.core.exit');
-                    sco.defaultdata['cmi.suspend_data'] = scormIsset(sco.userdata, 'cmi.suspend_data');
-                    sco.defaultdata['cmi.comments'] = scormIsset(sco.userdata, 'cmi.comments');
-                    sco.defaultdata['cmi.student_preference.language'] = scormIsset(sco.userdata, 'cmi.student_preference.language');
-                    sco.defaultdata['cmi.student_preference.audio'] = scormIsset(sco.userdata, 'cmi.student_preference.audio', '0');
-                    sco.defaultdata['cmi.student_preference.speed'] = scormIsset(sco.userdata, 'cmi.student_preference.speed', '0');
-                    sco.defaultdata['cmi.student_preference.text'] = scormIsset(sco.userdata, 'cmi.student_preference.text', '0');
-
-                    // Some data needs to be both in default data and user data.
-                    sco.userdata.student_id = username;
-                    sco.userdata.student_name = fullName;
-                    sco.userdata.mode = sco.defaultdata['cmi.core.lesson_mode'];
-                    sco.userdata.credit = sco.defaultdata['cmi.core.credit'];
-                    sco.userdata.entry = sco.defaultdata['cmi.core.entry'];
-                });
-
-                return response;
+                            timemodified: 0
+                        }
+                    };
+                }
+                response[scoid].userdata[entry.element] = entry.value;
+                if (entry.timemodified > response[scoid].userdata.timemodified) {
+                    response[scoid].userdata.timemodified = entry.timemodified;
+                }
             });
+
+            // Format each user data retrieved.
+            angular.forEach(response, function(sco) {
+                sco.userdata = formatInteractions(sco.userdata);
+            });
+
+            // Create empty entries for the SCOs without user data stored.
+            angular.forEach(scos, function(sco) {
+                if (!response[sco.id]) {
+                    response[sco.id] = {
+                        scoid: sco.id,
+                        userdata: {
+                            status: '',
+                            score_raw: ''
+                        }
+                    };
+                }
+            });
+
+            // Calculate defaultdata.
+            angular.forEach(response, function(sco) {
+                sco.defaultdata = {};
+                sco.defaultdata['cmi.core.student_id'] = username;
+                sco.defaultdata['cmi.core.student_name'] = fullName;
+                sco.defaultdata['cmi.core.lesson_mode'] = 'normal'; // Overridden in player.
+                sco.defaultdata['cmi.core.credit'] = 'credit'; // Overridden in player.
+                if (sco.userdata.status === '') {
+                    sco.defaultdata['cmi.core.entry'] = 'ab-initio';
+                } else if (sco.userdata['cmi.core.exit'] === 'suspend') {
+                    sco.defaultdata['cmi.core.entry'] = 'resume';
+                } else {
+                    sco.defaultdata['cmi.core.entry'] = '';
+                }
+                sco.defaultdata['cmi.student_data.mastery_score'] = scormIsset(sco.userdata, 'masteryscore');
+                sco.defaultdata['cmi.student_data.max_time_allowed'] = scormIsset(sco.userdata, 'max_time_allowed');
+                sco.defaultdata['cmi.student_data.time_limit_action'] = scormIsset(sco.userdata, 'time_limit_action');
+                sco.defaultdata['cmi.core.total_time'] = scormIsset(sco.userdata, 'cmi.core.total_time', '00:00:00');
+                sco.defaultdata['cmi.launch_data'] = launchUrls[sco.scoid];
+
+                // Now handle standard userdata items.
+                sco.defaultdata['cmi.core.lesson_location'] = scormIsset(sco.userdata, 'cmi.core.lesson_location');
+                sco.defaultdata['cmi.core.lesson_status'] = scormIsset(sco.userdata, 'cmi.core.lesson_status');
+                sco.defaultdata['cmi.core.score.raw'] = scormIsset(sco.userdata, 'cmi.core.score.raw');
+                sco.defaultdata['cmi.core.score.max'] = scormIsset(sco.userdata, 'cmi.core.score.max');
+                sco.defaultdata['cmi.core.score.min'] = scormIsset(sco.userdata, 'cmi.core.score.min');
+                sco.defaultdata['cmi.core.exit'] = scormIsset(sco.userdata, 'cmi.core.exit');
+                sco.defaultdata['cmi.suspend_data'] = scormIsset(sco.userdata, 'cmi.suspend_data');
+                sco.defaultdata['cmi.comments'] = scormIsset(sco.userdata, 'cmi.comments');
+                sco.defaultdata['cmi.student_preference.language'] = scormIsset(sco.userdata, 'cmi.student_preference.language');
+                sco.defaultdata['cmi.student_preference.audio'] = scormIsset(sco.userdata, 'cmi.student_preference.audio', '0');
+                sco.defaultdata['cmi.student_preference.speed'] = scormIsset(sco.userdata, 'cmi.student_preference.speed', '0');
+                sco.defaultdata['cmi.student_preference.text'] = scormIsset(sco.userdata, 'cmi.student_preference.text', '0');
+
+                // Some data needs to be both in default data and user data.
+                sco.userdata.student_id = username;
+                sco.userdata.student_name = fullName;
+                sco.userdata.mode = sco.defaultdata['cmi.core.lesson_mode'];
+                sco.userdata.credit = sco.defaultdata['cmi.core.credit'];
+                sco.userdata.entry = sco.defaultdata['cmi.core.entry'];
+            });
+
+            return response;
         });
     };
 
     /**
      * Function to insert a track in the DB. Please do not use it directly, use insertTrack instead.
      *
-     * @param  {Object} db           Site's DB.
      * @param  {Number} userId       User ID.
      * @param  {Number} scormId      SCORM ID.
      * @param  {Number} scoId        SCO ID.
@@ -590,7 +552,7 @@ angular.module('mm.addons.mod_scorm')
      * @param  {Boolean} synchronous True if insert should NOT return a promise. Please use it only if synchronous is a must.
      * @return {Boolean|Promise}     Returns a promise if synchronous=false, otherwise returns a boolean.
      */
-    function insertTrackToDB(db, userId, scormId, scoId, attempt, element, value, synchronous) {
+    function insertTrackToDB(userId, scormId, scoId, attempt, element, value, synchronous) {
         var entry = {
             userid: userId,
             scormid: scormId,
@@ -602,9 +564,9 @@ angular.module('mm.addons.mod_scorm')
             synced: 0
         };
         if (synchronous) {
-            return db.insertSync(mmaModScormOfflineTracksStore, entry);
+            return $mmSite.getDb().insertSync(mmaModScormOfflineTracksStore, entry);
         } else {
-            return db.insert(mmaModScormOfflineTracksStore, entry);
+            return $mmSite.getDb().insert(mmaModScormOfflineTracksStore, entry);
         }
     }
 
@@ -612,8 +574,7 @@ angular.module('mm.addons.mod_scorm')
      * Insert a track in the offline tracks store.
      * This function is based on Moodle's scorm_insert_track.
      *
-     * @param {String} siteId           Site ID.
-     * @param  {Number} [userId]        User ID. If not set use site's current user.
+     * @param  {Number} [userId]        User ID.
      * @param  {Number} scormId         SCORM ID.
      * @param  {Number} scoId           SCO ID.
      * @param  {Number} attempt         Attempt number.
@@ -623,46 +584,43 @@ angular.module('mm.addons.mod_scorm')
      * @param  {Object} [scoData]       User data for the given SCO.
      * @return {Promise}                Promise resolved when the insert is done.
      */
-    function insertTrack(siteId, userId, scormId, scoId, attempt, element, value, forceCompleted, scoData) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            userId = userId || site.getUserId();
-            scoData = scoData || {};
+    function insertTrack(userId, scormId, scoId, attempt, element, value, forceCompleted, scoData) {
+        userId = userId || $mmSite.getUserId();
+        scoData = scoData || {};
 
-            var promises = [], // List of promises for actions previous to the real insert.
-                lessonStatusInserted = false,
-                scoUserData = scoData.userdata || {},
-                db = site.getDb();
+        var promises = [], // List of promises for actions previous to the real insert.
+            lessonStatusInserted = false,
+            scoUserData = scoData.userdata || {};
 
-            if (forceCompleted) {
-                if (element == 'cmi.core.lesson_status' && value == 'incomplete') {
-                    if (scoUserData['cmi.core.score.raw']) {
-                        value = 'completed';
-                    }
-                }
-                if (element == 'cmi.core.score.raw') {
-                    if (scoUserData['cmi.core.lesson_status'] == 'incomplete') {
-                        lessonStatusInserted = true;
-                        promises.push(insertTrackToDB(db, userId, scormId, scoId, attempt, 'cmi.core.lesson_status', 'completed'));
-                    }
+        if (forceCompleted) {
+            if (element == 'cmi.core.lesson_status' && value == 'incomplete') {
+                if (scoUserData['cmi.core.score.raw']) {
+                    value = 'completed';
                 }
             }
-
-            return $q.all(promises).then(function() {
-                // Don't update x.start.time, keep the original value.
-                if (!scoUserData[element] || element != 'x.start.time') {
-
-                    return insertTrackToDB(db, userId, scormId, scoId, attempt, element, value).catch(function() {
-                        if (lessonStatusInserted) {
-                            // Rollback previous insert.
-                            return insertTrackToDB(db, userId, scormId, scoId, attempt, 'cmi.core.lesson_status', 'incomplete')
-                                    .then(function() {
-                                return $q.reject();
-                            });
-                        }
-                        return $q.reject();
-                    });
+            if (element == 'cmi.core.score.raw') {
+                if (scoUserData['cmi.core.lesson_status'] == 'incomplete') {
+                    lessonStatusInserted = true;
+                    promises.push(insertTrackToDB(userId, scormId, scoId, attempt, 'cmi.core.lesson_status', 'completed'));
                 }
-            });
+            }
+        }
+
+        return $q.all(promises).then(function() {
+            // Don't update x.start.time, keep the original value.
+            if (!scoUserData[element] || element != 'x.start.time') {
+
+                return insertTrackToDB(userId, scormId, scoId, attempt, element, value).catch(function() {
+                    if (lessonStatusInserted) {
+                        // Rollback previous insert.
+                        return insertTrackToDB(userId, scormId, scoId, attempt, 'cmi.core.lesson_status', 'incomplete')
+                                .then(function() {
+                            return $q.reject();
+                        });
+                    }
+                    return $q.reject();
+                });
+            }
         });
     }
 
@@ -671,7 +629,7 @@ angular.module('mm.addons.mod_scorm')
      * Please use this function only if synchronous is a must. It's recommended to use insertTrack.
      * This function is based on Moodle's scorm_insert_track.
      *
-     * @param  {Number} [userId]        User ID. If not set use current user.
+     * @param  {Number} [userId]        User ID.
      * @param  {Number} scormId         SCORM ID.
      * @param  {Number} scoId           SCO ID.
      * @param  {Number} attempt         Attempt number.
@@ -685,14 +643,8 @@ angular.module('mm.addons.mod_scorm')
         userId = userId || $mmSite.getUserId();
         scoData = scoData || {};
 
-        if (!$mmSite.isLoggedIn()) {
-            // Not logged in, we can't get the site DB. User logged out or session expired while an operation was ongoing.
-            return false;
-        }
-
         var lessonStatusInserted = false,
-            scoUserData = scoData.userdata || {},
-            db = $mmSite.getDb();
+            scoUserData = scoData.userdata || {};
 
         if (forceCompleted) {
             if (element == 'cmi.core.lesson_status' && value == 'incomplete') {
@@ -703,7 +655,7 @@ angular.module('mm.addons.mod_scorm')
             if (element == 'cmi.core.score.raw') {
                 if (scoUserData['cmi.core.lesson_status'] == 'incomplete') {
                     lessonStatusInserted = true;
-                    if (!insertTrackToDB(db, userId, scormId, scoId, attempt, 'cmi.core.lesson_status', 'completed', true)) {
+                    if (!insertTrackToDB(userId, scormId, scoId, attempt, 'cmi.core.lesson_status', 'completed', true)) {
                         return false;
                     }
                 }
@@ -712,11 +664,11 @@ angular.module('mm.addons.mod_scorm')
 
         // Don't update x.start.time, keep the original value.
         if (!scoUserData[element] || element != 'x.start.time') {
-            if (!insertTrackToDB(db, userId, scormId, scoId, attempt, element, value, true)) {
+            if (!insertTrackToDB(userId, scormId, scoId, attempt, element, value, true)) {
                 // Insert failed.
                 if (lessonStatusInserted) {
                     // Rollback previous insert.
-                    insertTrackToDB(db, userId, scormId, scoId, attempt, 'cmi.core.lesson_status', 'incomplete', true);
+                    insertTrackToDB(userId, scormId, scoId, attempt, 'cmi.core.lesson_status', 'incomplete', true);
                 }
                 return false;
             }
@@ -730,15 +682,11 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#isScormBlocked
-     * @param  {String} siteId   Site ID.
      * @param  {Number} scormId  SCORM ID.
      * @return {Boolean}         True if blocked, false otherwise.
      */
-    self.isScormBlocked = function(siteId, scormId) {
-        if (!blockedScorms[siteId]) {
-            return false;
-        }
-        return !!blockedScorms[siteId][scormId];
+    self.isScormBlocked = function(scormId) {
+        return !!blockedScorms[scormId];
     };
 
     /**
@@ -747,31 +695,28 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#markAsSynced
-     * @param {String} siteId   Site ID.
      * @param {Number} scormId  SCORM ID.
      * @param {Number} attempt  Attempt number.
-     * @param {Number} [userId] User ID. If not defined use site's current user.
+     * @param {Number} [userId] User ID. If not defined, current user.
      * @param {Number} scoId    SCO ID.
      * @return {Promise}        Promise resolved when marked.
      */
-    self.markAsSynced = function(siteId, scormId, attempt, userId, scoId) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            $log.debug('Mark SCO ' + scoId + ' as synced for attempt ' + attempt + ' in SCORM ' + scormId);
-            userId = userId || site.getUserId();
+    self.markAsSynced = function(scormId, attempt, userId, scoId) {
+        $log.debug('Mark SCO ' + scoId + ' as synced for attempt ' + attempt + ' in SCORM ' + scormId);
+        userId = userId || $mmSite.getUserId();
 
-            return self.getScormStoredData(siteId, scormId, attempt, userId, true).then(function(entries) {
-                var promises = [],
-                    db = site.getDb();
+        return self.getScormStoredData(scormId, attempt, userId, true).then(function(entries) {
+            var promises = [],
+                db = $mmSite.getDb();
 
-                angular.forEach(entries, function(entry) {
-                    if (entry.scoid == scoId) {
-                        entry.synced = 1;
-                        promises.push(db.insert(mmaModScormOfflineTracksStore, entry));
-                    }
-                });
-
-                return $q.all(promises);
+            angular.forEach(entries, function(entry) {
+                if (entry.scoid == scoId) {
+                    entry.synced = 1;
+                    promises.push(db.insert(mmaModScormOfflineTracksStore, entry));
+                }
             });
+
+            return $q.all(promises);
         });
     };
 
@@ -795,7 +740,6 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#saveTracks
-     * @param {String} siteId      Site ID.
      * @param  {Object} scorm      SCORM.
      * @param  {Number} scoId      Sco ID.
      * @param  {Number} attempt    Attempt number.
@@ -803,28 +747,23 @@ angular.module('mm.addons.mod_scorm')
      * @param  {Object} userData   User data for this attempt and SCO.
      * @return {Promise}           Promise resolved when data is saved.
      */
-    self.saveTracks = function(siteId, scorm, scoId, attempt, tracks, userData) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            var userId = site.getUserId(),
-                initialBlocked;
+    self.saveTracks = function(scorm, scoId, attempt, tracks, userData) {
+        var userId = $mmSite.getUserId(),
+            initialBlocked = !!blockedScorms[scorm.id]; // Save initial blocked state.
 
-            if (!blockedScorms[siteId]) {
-                blockedScorms[siteId] = {};
+        blockedScorms[scorm.id] = true; // Block the SCORM so it can't be synced.
+
+        // Insert all the tracks.
+        var promises = [];
+        angular.forEach(tracks, function(track) {
+            promises.push(
+                insertTrack(userId, scorm.id, scoId, attempt, track.element, track.value, scorm.forcecompleted, userData[scoId])
+            );
+        });
+        return $q.all(promises).finally(function() {
+            if (!initialBlocked) {
+                blockedScorms[scorm.id] = false; // Unblock the SCORM only if it wasn't blocked by another function.
             }
-            initialBlocked = !!blockedScorms[siteId][scorm.id]; // Save initial blocked state.
-            blockedScorms[siteId][scorm.id] = true; // Block the SCORM so it can't be synced.
-
-            // Insert all the tracks.
-            var promises = [];
-            angular.forEach(tracks, function(track) {
-                promises.push(insertTrack(siteId, userId, scorm.id, scoId, attempt,
-                                            track.element, track.value, scorm.forcecompleted, userData[scoId]));
-            });
-            return $q.all(promises).finally(function() {
-                if (!initialBlocked) {
-                    blockedScorms[siteId][scorm.id] = false; // Unblock the SCORM only if it wasn't blocked by another function.
-                }
-            });
         });
     };
 
@@ -882,23 +821,20 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScormOffline#setAttemptSnapshot
-     * @param {String} siteId      Site ID.
      * @param {Number} scormId  SCORM ID.
      * @param {Number} attempt  Attempt number.
      * @param {Object} userData User data to store as snapshot.
-     * @param {Number} [userId] User ID. If not defined use site's current user.
+     * @param {Number} [userId] User ID. If not defined, current user.
      * @return {Promise}        Promise resolved when snapshot has been stored.
      */
-    self.setAttemptSnapshot = function(siteId, scormId, attempt, userData, userId) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            $log.debug('Set snapshot for attempt ' + attempt + ' in SCORM ' + scormId);
-            userId = userId || site.getUserId();
+    self.setAttemptSnapshot = function(scormId, attempt, userData, userId) {
+        $log.debug('Set snapshot for attempt ' + attempt + ' in SCORM ' + scormId);
+        userId = userId || $mmSite.getUserId();
 
-            return site.getDb().get(mmaModScormOfflineAttemptsStore, [scormId, userId, attempt]).then(function(entry) {
-                entry.snapshot = removeDefaultData(userData);
-                entry.timemodified = $mmUtil.timestamp();
-                return site.getDb().insert(mmaModScormOfflineAttemptsStore, entry);
-            });
+        return $mmSite.getDb().get(mmaModScormOfflineAttemptsStore, [scormId, userId, attempt]).then(function(entry) {
+            entry.snapshot = removeDefaultData(userData);
+            entry.timemodified = $mmUtil.timestamp();
+            return $mmSite.getDb().insert(mmaModScormOfflineAttemptsStore, entry);
         });
     };
 

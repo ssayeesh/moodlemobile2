@@ -14,6 +14,19 @@
 
 angular.module('mm.addons.mod_scorm')
 
+.constant('mmaModScormSynchronizationStore', 'mod_scorm_sync')
+
+.config(function($mmSitesFactoryProvider, mmaModScormSynchronizationStore) {
+    var stores = [
+        {
+            name: mmaModScormSynchronizationStore,
+            keyPath: 'scormid',
+            indexes: []
+        }
+    ];
+    $mmSitesFactoryProvider.registerStores(stores);
+})
+
 /**
  * SCORM service.
  *
@@ -22,7 +35,7 @@ angular.module('mm.addons.mod_scorm')
  * @name $mmaModScorm
  */
 .factory('$mmaModScorm', function($mmSite, $q, $translate, $mmLang, $mmFilepool, $mmFS, $mmWS, $sce, $mmaModScormOnline, $state,
-            $mmaModScormOffline, $mmUtil, $log, $mmSitesManager, mmaModScormComponent, mmCoreNotDownloaded) {
+            $mmaModScormOffline, $mmUtil, $log, mmaModScormComponent, mmCoreNotDownloaded) {
     $log = $log.getInstance('$mmaModScorm');
 
     var self = {},
@@ -245,16 +258,16 @@ angular.module('mm.addons.mod_scorm')
      */
     self._downloadOrPrefetch = function(scorm, prefetch) {
         var result = self.isScormSupported(scorm),
-            siteId = $mmSite.getId();
+            siteid = $mmSite.getId();
         if (result !== true) {
             return $mmLang.translateAndReject(result);
         }
 
-        if (downloadPromises[siteId] && downloadPromises[siteId][scorm.id]) {
+        if (downloadPromises[siteid] && downloadPromises[siteid][scorm.id]) {
             // There's already a download ongoing for this package, return the promise.
-            return downloadPromises[siteId][scorm.id];
-        } else if (!downloadPromises[siteId]) {
-            downloadPromises[siteId] = {};
+            return downloadPromises[siteid][scorm.id];
+        } else if (!downloadPromises[siteid]) {
+            downloadPromises[siteid] = {};
         }
 
         var files = self.getScormFileList(scorm),
@@ -263,7 +276,7 @@ angular.module('mm.addons.mod_scorm')
             deferred = $q.defer(), // We use a deferred to be able to notify.
             fn = prefetch ? $mmFilepool.prefetchPackage : $mmFilepool.downloadPackage;
 
-        downloadPromises[siteId][scorm.id] = deferred.promise; // Store promise to be able to restore it later.
+        downloadPromises[siteid][scorm.id] = deferred.promise; // Store promise to be able to restore it later.
 
         // Get the folder where the unzipped files will be.
         self.getScormFolder(scorm.moduleurl).then(function(path) {
@@ -271,7 +284,7 @@ angular.module('mm.addons.mod_scorm')
             // Download the ZIP file to the filepool.
             // Using undefined for success & fail will pass the success/failure to the parent promise.
             deferred.notify({message: 'mm.core.downloading'});
-            return fn(siteId, files, mmaModScormComponent, scorm.coursemodule, revision, 0)
+            return fn(siteid, files, mmaModScormComponent, scorm.coursemodule, revision, 0)
                                                         .then(undefined, undefined, deferred.notify);
         }).then(function() {
             // Remove the destination folder to prevent having old unused files.
@@ -280,23 +293,23 @@ angular.module('mm.addons.mod_scorm')
             });
         }).then(function() {
             // Get the ZIP file path.
-            return $mmFilepool.getFilePathByUrl(siteId, self.getPackageUrl(scorm));
+            return $mmFilepool.getFilePathByUrl(siteid, self.getPackageUrl(scorm));
         }).then(function(zippath) {
             // Unzip and delete the zip when finished.
             deferred.notify({message: 'mm.core.unzipping'});
             return $mmFS.unzipFile(zippath, dirPath).then(function() {
-                return $mmFilepool.removeFileByUrl(siteId, self.getPackageUrl(scorm)).catch(function() {
+                return $mmFilepool.removeFileByUrl(siteid, self.getPackageUrl(scorm)).catch(function() {
                     // Ignore errors.
                 });
             }, function(error) {
                 // Error unzipping. Set status as not downloaded and reject.
-                return $mmFilepool.storePackageStatus(siteId, mmaModScormComponent, scorm.coursemodule,
+                return $mmFilepool.storePackageStatus(siteid, mmaModScormComponent, scorm.coursemodule,
                                             mmCoreNotDownloaded, revision, 0).then(function() {
                     return $q.reject(error);
                 });
             }, deferred.notify);
         }).then(deferred.resolve, deferred.reject).finally(function() {
-            delete downloadPromises[siteId][scorm.id]; // Delete stored promise.
+            delete downloadPromises[siteid][scorm.id]; // Delete stored promise.
         });
 
         return deferred.promise;
@@ -469,64 +482,58 @@ angular.module('mm.addons.mod_scorm')
      * @ngdoc method
      * @name $mmaModScorm#getAttemptCount
      * @param {Number} scormId        SCORM ID.
-     * @param {String} [siteId]       Site ID. If not defined, current site.
-     * @param {Number} [userId]       User ID. If not defined use site's current user.
+     * @param {Number} [userId]       User ID. If not defined, current user.
      * @param {Boolean} ignoreMissing True if it should ignore attempts without grade/completion. Only for online attempts.
      * @param {Boolean} ignoreCache   True if it should ignore cached data for online attempts.
      * @return {Promise}              Promise resolved when the attempt count is retrieved. It returns an object with
      *                                online attempts, offline attempts, total number of attempts and last attempt.
      */
-    self.getAttemptCount = function(scormId, siteId, userId, ignoreMissing, ignoreCache) {
-        siteId = siteId || $mmSite.getId();
+    self.getAttemptCount = function(scormId, userId, ignoreMissing, ignoreCache) {
+        userId = userId || $mmSite.getUserId();
 
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            userId = userId || site.getUserId();
-
-            var result = {
-                    lastAttempt: {
-                        number: 0,
-                        offline: false
-                    }
-                },
-                promises = [];
-
-            promises.push($mmaModScormOnline.getAttemptCount(siteId, scormId, userId, ignoreMissing, ignoreCache)
-                        .then(function(count) {
-                // Calculate numbers of online attempts.
-                result.online = [];
-                for (var i = 1; i <= count; i++) {
-                    result.online.push(i);
+        var result = {
+                lastAttempt: {
+                    number: 0,
+                    offline: false
                 }
-                // Calculate last attempt.
-                if (count > result.lastAttempt.number) {
-                    result.lastAttempt.number = count;
-                    result.lastAttempt.offline = false;
+            },
+            promises = [];
+
+        promises.push($mmaModScormOnline.getAttemptCount(scormId, userId, ignoreMissing, ignoreCache).then(function(count) {
+            // Calculate numbers of offline attempts.
+            result.online = [];
+            for (var i = 1; i <= count; i++) {
+                result.online.push(i);
+            }
+            // Calculate last attempt.
+            if (count > result.lastAttempt.number) {
+                result.lastAttempt.number = count;
+                result.lastAttempt.offline = false;
+            }
+        }));
+
+        promises.push($mmaModScormOffline.getAttempts(scormId, userId).then(function(attempts) {
+            // Get only attempt numbers.
+            result.offline = attempts.map(function(entry) {
+                // Calculate last attempt. We use >= to prioritize offline events if an attempt is both online and offline.
+                if (entry.attempt >= result.lastAttempt.number) {
+                    result.lastAttempt.number = entry.attempt;
+                    result.lastAttempt.offline = true;
                 }
-            }));
-
-            promises.push($mmaModScormOffline.getAttempts(siteId, scormId, userId).then(function(attempts) {
-                // Get only attempt numbers.
-                result.offline = attempts.map(function(entry) {
-                    // Calculate last attempt. We use >= to prioritize offline events if an attempt is both online and offline.
-                    if (entry.attempt >= result.lastAttempt.number) {
-                        result.lastAttempt.number = entry.attempt;
-                        result.lastAttempt.offline = true;
-                    }
-                    return entry.attempt;
-                });
-            }));
-
-            return $q.all(promises).then(function() {
-                var total = result.online.length;
-                result.offline.forEach(function(attempt) {
-                    // Check if this attempt also exists in online, it might have been copied to local.
-                    if (result.online.indexOf(attempt) == -1) {
-                        total++;
-                    }
-                });
-                result.total = total;
-                return result;
+                return entry.attempt;
             });
+        }));
+
+        return $q.all(promises).then(function() {
+            var total = result.online.length;
+            result.offline.forEach(function(attempt) {
+                // Check if this attempt also exists in online, it might have been copied to local.
+                if (result.online.indexOf(attempt) == -1) {
+                    total++;
+                }
+            });
+            result.total = total;
+            return result;
         });
     };
 
@@ -540,10 +547,9 @@ angular.module('mm.addons.mod_scorm')
      * @param {Number} scormid  SCORM ID.
      * @param {Number} attempt  Attempt number.
      * @param {Boolean} offline True if attempt is offline, false otherwise.
-     * @param {String} [siteId] Site ID. If not defined, current site.
      * @return {Promise}        Promise resolved with the grade. If the attempt hasn't reported grade/completion, grade will be -1.
      */
-    self.getAttemptGrade = function(scorm, attempt, offline, siteId) {
+    self.getAttemptGrade = function(scorm, attempt, offline) {
         var attemptscore = {
             scos: 0,
             values: 0,
@@ -551,7 +557,7 @@ angular.module('mm.addons.mod_scorm')
             sum: 0
         };
 
-        return self.getScormUserData(scorm.id, attempt, offline, siteId).then(function(data) {
+        return self.getScormUserData(scorm.id, attempt, offline).then(function(data) {
             angular.forEach(data, function(scodata) {
                 var userdata = scodata.userdata;
                 if (userdata.status == 'completed' || userdata.status == 'passed') {
@@ -599,12 +605,11 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#getOrganizations
-     * @param  {Number} scormId SCORM ID.
-     * @param {String} [siteId] Site ID. If not defined, current site.
+     * @param  {Number} scormid SCORM ID.
      * @return {Promise}        Promise resolved with the list of organizations.
      */
-    self.getOrganizations = function(scormId, siteId) {
-        return self.getScos(scormId, siteId).then(function(scos) {
+    self.getOrganizations = function(scormid) {
+        return self.getScos(scormid).then(function(scos) {
             var organizations = [];
             angular.forEach(scos, function(sco) {
                 // Is an organization entry?
@@ -626,16 +631,15 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#getOrganizationToc
-     * @param  {Number} scormId      SCORM ID.
+     * @param  {Number} scormid      SCORM ID.
      * @param  {String} organization Organization identifier.
      * @param  {Number} attempt      The attempt number (to populate SCO track data).
      * @param {Boolean} offline      True if attempt is offline, false otherwise.
-     * @param {String} [siteId]      Site ID. If not defined, current site.
      * @return {Promise}             Promise resolved with the toc object.
      */
-    self.getOrganizationToc = function(scormId, organization, attempt, offline, siteId) {
+    self.getOrganizationToc = function(scormid, organization, attempt, offline) {
 
-        return self.getScosWithData(scormId, organization, attempt, offline, false, siteId).then(function(scos) {
+        return self.getScosWithData(scormid, organization, attempt, offline).then(function(scos) {
             var map = {},
                 rootScos = [];
 
@@ -685,31 +689,29 @@ angular.module('mm.addons.mod_scorm')
      * @param {Number} scormId      SCORM ID.
      * @param {Number} attempt      Attempt number.
      * @param {Boolean} offline     True if attempt is offline, false otherwise.
-     * @param {String} [siteId]     Site ID. If not defined, current site.
      * @param {Object[]} [scos]     SCOs returned by $mmaModScorm#getScos. Recommended if offline=true.
      * @param {Boolean} ignoreCache True if it should ignore cached data for online attempts.
      * @return {Promise}            Promise resolved when the user data is retrieved.
      */
-    self.getScormUserData = function(scormId, attempt, offline, siteId, scos, ignoreCache) {
-        siteId = siteId || $mmSite.getId();
+    self.getScormUserData = function(scormId, attempt, offline, scos, ignoreCache) {
         if (offline) {
-            var promise = scos ? $q.when(scos) : self.getScos(scormId, siteId);
+            var promise = scos ? $q.when(scos) : self.getScos(scormId);
             return promise.then(function(scos) {
-                return $mmaModScormOffline.getScormUserData(siteId, scormId, attempt, undefined, scos);
+                return $mmaModScormOffline.getScormUserData(scormId, attempt, undefined, scos);
             });
         } else {
-            return $mmaModScormOnline.getScormUserData(siteId, scormId, attempt, ignoreCache);
+            return $mmaModScormOnline.getScormUserData(scormId, attempt, ignoreCache);
         }
     };
 
     /**
      * Get cache key for get SCORM scos WS calls.
      *
-     * @param  {Number} scormId SCORM ID.
+     * @param  {Number} scormid SCORM ID.
      * @return {String}         Cache key.
      */
-    function getScosCacheKey(scormId) {
-        return 'mmaModScorm:scos:' + scormId;
+    function getScosCacheKey(scormid) {
+        return 'mmaModScorm:scos:' + scormid;
     }
 
     /**
@@ -718,48 +720,47 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#getScos
-     * @param  {Number} scormId        SCORM ID.
-     * @param  {String} [siteId]       Site ID. If not defined, current site.
-     * @param  {String} [organization] Organization ID.
-     * @param  {Boolean} ignoreCache   True if it should ignore cached data (it will always fail if offline or server down).
-     * @return {Promise}               Promise resolved with a list of SCO objects.
+     * @param  {Number} scormid      SCORM ID.
+     * @param  {String} organization Organization ID.
+     * @param  {Boolean} ignoreCache True if it should ignore cached data (it will always fail if offline or server down).
+     * @return {Promise}             Promise resolved with a list of SCO objects.
      */
-    self.getScos = function(scormId, siteId, organization, ignoreCache) {
-        siteId = siteId || $mmSite.getId();
+    self.getScos = function(scormid, organization, ignoreCache) {
+        organization = organization || '';
 
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            organization = organization || '';
+        if (!$mmSite.isLoggedIn()) {
+            return $q.reject();
+        }
 
-            // Don't send the organization to the WS, we'll filter them locally.
-            var params = {
-                    scormid: scormId
-                },
-                preSets = {
-                    cacheKey: getScosCacheKey(scormId)
-                };
+        // Don't send the organization to the WS, we'll filter them locally.
+        var params = {
+                scormid: scormid
+            },
+            preSets = {
+                cacheKey: getScosCacheKey(scormid)
+            };
 
-            if (ignoreCache) {
-                preSets.getFromCache = 0;
-                preSets.emergencyCache = 0;
-            }
+        if (ignoreCache) {
+            preSets.getFromCache = 0;
+            preSets.emergencyCache = 0;
+        }
 
-            return site.read('mod_scorm_get_scorm_scoes', params, preSets).then(function(response) {
-                if (response && response.scoes) {
-                    var scos = [];
-                    if (organization) {
-                        // Filter SCOs by organization.
-                        angular.forEach(response.scoes, function(sco) {
-                            if (sco.organization == organization) {
-                                scos.push(sco);
-                            }
-                        });
-                    } else {
-                        scos = response.scoes;
-                    }
-                    return scos;
+        return $mmSite.read('mod_scorm_get_scorm_scoes', params, preSets).then(function(response) {
+            if (response && response.scoes) {
+                var scos = [];
+                if (organization) {
+                    // Filter SCOs by organization.
+                    angular.forEach(response.scoes, function(sco) {
+                        if (sco.organization == organization) {
+                            scos.push(sco);
+                        }
+                    });
+                } else {
+                    scos = response.scoes;
                 }
-                return $q.reject();
-            });
+                return scos;
+            }
+            return $q.reject();
         });
     };
 
@@ -770,20 +771,19 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#getScosWithData
-     * @param  {Number} scormId      SCORM ID.
+     * @param  {Number} scormid      SCORM ID.
      * @param  {String} organization Organization ID.
      * @param  {Number} attempt      Attempt number.
      * @param  {Boolean} offline     True if attempt is offline, false otherwise.
      * @param  {Boolean} ignoreCache True if it should ignore cached data for online attempts.
-     * @param  {String} [siteId]     Site ID. If not defined, current site.
      * @return {Promise}             Promise resolved with a list of SCO objects.
      */
-    self.getScosWithData = function(scormId, organization, attempt, offline, ignoreCache, siteId) {
+    self.getScosWithData = function(scormid, organization, attempt, offline, ignoreCache) {
         // Get organization SCOs.
-        return self.getScos(scormId, siteId, organization, ignoreCache).then(function(scos) {
+        return self.getScos(scormid, organization, ignoreCache).then(function(scos) {
             // Get the track data for all the SCOs in the organization for the given attempt.
             // We'll use this data to set SCO data like isvisible, status and so.
-            return self.getScormUserData(scormId, attempt, offline, siteId, scos, ignoreCache).then(function(data) {
+            return self.getScormUserData(scormid, attempt, offline, scos, ignoreCache).then(function(data) {
 
                 var trackDataBySCO = {};
 
@@ -823,20 +823,17 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#getScoSrc
-     * @param  {Object} scorm   SCORM.
-     * @param  {Object} sco     SCO.
-     * @param {String} [siteId] Site ID. If not defined, current site.
-     * @return {Promise}        Promise resolved with the URL.
+     * @param  {Object} scorm SCORM.
+     * @param  {Object} sco   SCO.
+     * @return {Promise}      Promise resolved with the URL.
      */
-    self.getScoSrc = function(scorm, sco, siteId) {
+    self.getScoSrc = function(scorm, sco) {
         if (sco.launch.match(/http(s)?:\/\//)) {
             // It's an online URL.
             return $q.when($sce.trustAsResourceUrl(sco.launch));
         }
 
-        siteId = siteId || $mmSite.getId();
-
-        return $mmFilepool.getDirectoryUrlByUrl(siteId, scorm.moduleurl).then(function(dirPath) {
+        return $mmFilepool.getDirectoryUrlByUrl($mmSite.getId(), scorm.moduleurl).then(function(dirPath) {
             // This URL is going to be injected in an iframe, we need trustAsResourceUrl to make it work in a browser.
             return $sce.trustAsResourceUrl($mmFS.concatenatePaths(dirPath, sco.launch));
         });
@@ -848,13 +845,11 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#getScormFolder
-     * @param  {String} moduleUrl Module URL (returned by get_course_contents).
-     * @param {String} [siteId]   Site ID. If not defined, current site.
+     * @param  {String} moduleurl Module URL (returned by get_course_contents).
      * @return {Promise}          Promise resolved with the folder path.
      */
-    self.getScormFolder = function(moduleUrl, siteId) {
-        siteId = siteId || $mmSite.getId();
-        return $mmFilepool.getFilePathByUrl(siteId, moduleUrl);
+    self.getScormFolder = function(moduleurl) {
+        return $mmFilepool.getFilePathByUrl($mmSite.getId(), moduleurl);
     };
 
     /**
@@ -930,55 +925,56 @@ angular.module('mm.addons.mod_scorm')
     /**
      * Get cache key for SCORM data WS calls.
      *
-     * @param {Number} courseId Course ID.
+     * @param {Number} courseid Course ID.
      * @return {String}         Cache key.
      */
-    function getScormDataCacheKey(courseId) {
-        return 'mmaModScorm:scorm:' + courseId;
+    function getScormDataCacheKey(courseid) {
+        return 'mmaModScorm:scorm:' + courseid;
     }
 
     /**
      * Get a SCORM with key=value. If more than one is found, only the first will be returned.
      *
-     * @param  {String} siteId    Site ID.
-     * @param  {Number} courseId  Course ID.
+     * @param  {Number} courseid  Course ID.
      * @param  {String} key       Name of the property to check.
      * @param  {Mixed} value      Value to search.
-     * @param  {String} moduleUrl Module URL.
+     * @param  {String} moduleurl Module URL.
      * @return {Promise}          Promise resolved when the SCORM is retrieved.
      */
-    function getScorm(siteId, courseId, key, value, moduleUrl) {
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            var params = {
-                    courseids: [courseId]
-                },
-                preSets = {
-                    cacheKey: getScormDataCacheKey(courseId)
-                };
+    function getScorm(courseid, key, value, moduleurl) {
+        var params = {
+                courseids: [courseid]
+            },
+            preSets = {
+                cacheKey: getScormDataCacheKey(courseid)
+            };
 
-            return site.read('mod_scorm_get_scorms_by_courses', params, preSets).then(function(response) {
-                if (response && response.scorms) {
-                    var currentScorm;
-                    angular.forEach(response.scorms, function(scorm) {
-                        if (!currentScorm && scorm[key] == value) {
-                            currentScorm = scorm;
-                        }
-                    });
-                    if (currentScorm) {
-                        // If the SCORM isn't available the WS returns a warning and it doesn't return timeopen and timeclosed.
-                        if (typeof currentScorm.timeopen == 'undefined') {
-                            angular.forEach(response.warnings, function(warning) {
-                                if (warning.itemid === currentScorm.id) {
-                                    currentScorm.warningmessage = warning.message;
-                                }
-                            });
-                        }
-                        currentScorm.moduleurl = moduleUrl;
-                        return currentScorm;
+        if (!$mmSite.isLoggedIn()) {
+            return $q.reject();
+        }
+
+        return $mmSite.read('mod_scorm_get_scorms_by_courses', params, preSets).then(function(response) {
+            if (response && response.scorms) {
+                var currentScorm;
+                angular.forEach(response.scorms, function(scorm) {
+                    if (!currentScorm && scorm[key] == value) {
+                        currentScorm = scorm;
                     }
+                });
+                if (currentScorm) {
+                    // If the SCORM isn't available the WS returns a warning and it doesn't return timeopen and timeclosed.
+                    if (typeof currentScorm.timeopen == 'undefined') {
+                        angular.forEach(response.warnings, function(warning) {
+                            if (warning.itemid === currentScorm.id) {
+                                currentScorm.warningmessage = warning.message;
+                            }
+                        });
+                    }
+                    currentScorm.moduleurl = moduleurl;
+                    return currentScorm;
                 }
-                return $q.reject();
-            });
+            }
+            return $q.reject();
         });
     }
 
@@ -988,15 +984,13 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#getScorm
-     * @param {Number} courseId  Course ID.
+     * @param {Number} courseid  Course ID.
      * @param {Number} cmid      Course module ID.
-     * @parma {String} moduleUrl Module URL.
-     * @param {String} [siteId]  Site ID. If not defined, current site.
+     * @parma {String} moduleurl Module URL.
      * @return {Promise}         Promise resolved when the SCORM is retrieved.
      */
-    self.getScorm = function(courseId, cmid, moduleUrl, siteId) {
-        siteId = siteId || $mmSite.getId();
-        return getScorm(siteId, courseId, 'coursemodule', cmid, moduleUrl);
+    self.getScorm = function(courseid, cmid, moduleurl) {
+        return getScorm(courseid, 'coursemodule', cmid, moduleurl);
     };
 
     /**
@@ -1005,15 +999,13 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#getScormById
-     * @param {Number} courseId  Course ID.
+     * @param {Number} courseid  Course ID.
      * @param {Number} cmid      Course module ID.
-     * @parma {String} moduleUrl Module URL.
-     * @param {String} [siteId]  Site ID. If not defined, current site.
+     * @parma {String} moduleurl Module URL.
      * @return {Promise}         Promise resolved when the SCORM is retrieved.
      */
-    self.getScormById = function(courseId, id, moduleUrl, siteId) {
-        siteId = siteId || $mmSite.getId();
-        return getScorm(siteId, courseId, 'id', id, moduleUrl);
+    self.getScormById = function(courseid, id, moduleurl) {
+        return getScorm(courseid, 'id', id, moduleurl);
     };
 
     /**
@@ -1057,17 +1049,15 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#invalidateAllScormData
-     * @param {Number} scormId  SCORM ID.
-     * @param {String} [siteId] Site ID. If not defined, current site.
-     * @param {Number} [userId] User ID. If not defined use site's current user.
+     * @param {Number} scormid  SCORM ID.
+     * @param {Number} [userid] User ID. If not defined, current user.
      * @return {Promise}        Promise resolved when the data is invalidated.
      */
-    self.invalidateAllScormData = function(scormId, siteId, userId) {
-        siteId = siteId || $mmSite.getId();
+    self.invalidateAllScormData = function(scormid, userid) {
         var promises = [];
-        promises.push($mmaModScormOnline.invalidateAttemptCount(siteId, scormId, userId));
-        promises.push(self.invalidateScos(scormId, siteId));
-        promises.push($mmaModScormOnline.invalidateScormUserData(siteId, scormId));
+        promises.push($mmaModScormOnline.invalidateAttemptCount(scormid, userid));
+        promises.push(self.invalidateScos(scormid));
+        promises.push($mmaModScormOnline.invalidateScormUserData(scormid));
         return $q.all(promises);
     };
 
@@ -1078,12 +1068,10 @@ angular.module('mm.addons.mod_scorm')
      * @ngdoc method
      * @name $mmaModScorm#invalidateContent
      * @param {Object} moduleId The module ID.
-     * @param {String} [siteId] Site ID. If not defined, current site.
      * @return {Promise}
      */
-    self.invalidateContent = function(moduleId, siteId) {
-        siteId = siteId || $mmSite.getId();
-        return $mmFilepool.invalidateFilesByComponent(siteId, mmaModScormComponent, moduleId);
+    self.invalidateContent = function(moduleId) {
+        return $mmFilepool.invalidateFilesByComponent($mmSite.getId(), mmaModScormComponent, moduleId);
     };
 
     /**
@@ -1092,15 +1080,11 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#invalidateScos
-     * @param {Number} scormId SCORM ID.
-     * @param {String} [siteId] Site ID. If not defined, current site.
+     * @param {Number} scormid SCORM ID.
      * @return {Promise}       Promise resolved when the data is invalidated.
      */
-    self.invalidateScos = function(scormId, siteId) {
-        siteId = siteId || $mmSite.getId();
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            return site.invalidateWsCacheForKey(getScosCacheKey(scormId));
-        });
+    self.invalidateScos = function(scormid) {
+        return $mmSite.invalidateWsCacheForKey(getScosCacheKey(scormid));
     };
 
     /**
@@ -1109,15 +1093,11 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#invalidateScormData
-     * @param {Number} courseId Course ID.
-     * @param {String} [siteId] Site ID. If not defined, current site.
+     * @param {Number} courseid Course ID.
      * @return {Promise}        Promise resolved when the data is invalidated.
      */
-    self.invalidateScormData = function(courseId, siteId) {
-        siteId = siteId || $mmSite.getId();
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            return site.invalidateWsCacheForKey(getScormDataCacheKey(courseId));
-        });
+    self.invalidateScormData = function(courseid) {
+        return $mmSite.invalidateWsCacheForKey(getScormDataCacheKey(courseid));
     };
 
     /**
@@ -1130,11 +1110,10 @@ angular.module('mm.addons.mod_scorm')
      * @param {Number} attempt      Attempt.
      * @param {Boolean} offline     True if attempt is offline, false otherwise.
      * @param {Boolean} ignoreCache True if it should ignore cached data for online attempts.
-     * @param {String} [siteId]     Site ID. If not defined, current site.
      * @return {Promise}            Promise resolved with a boolean: true if incomplete, false otherwise.
      */
-    self.isAttemptIncomplete = function(scormId, attempt, offline, ignoreCache, siteId) {
-        return self.getScosWithData(scormId, undefined, attempt, offline, ignoreCache, siteId).then(function(scos) {
+    self.isAttemptIncomplete = function(scormId, attempt, offline, ignoreCache) {
+        return self.getScosWithData(scormId, undefined, attempt, offline, ignoreCache).then(function(scos) {
             var incomplete = false;
 
             angular.forEach(scos, function(sco) {
@@ -1151,25 +1130,20 @@ angular.module('mm.addons.mod_scorm')
     };
 
     /**
-     * Return whether or not the plugin is enabled in a certain site. Plugin is enabled if the scorm WS are available.
+     * Return whether or not the plugin is enabled. Plugin is enabled if the scorm WS are available.
      *
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#isPluginEnabled
-     * @param  {String} [siteId] Site ID. If not defined, current site.
-     * @return {Promise}         Promise resolved with true if plugin is enabled, rejected or resolved with false otherwise.
+     * @return {Boolean} True if plugin is enabled, false otherwise.
      */
-    self.isPluginEnabled = function(siteId) {
-        siteId = siteId || $mmSite.getId();
-
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            return  site.wsAvailable('mod_scorm_get_scorm_attempt_count') &&
-                    site.wsAvailable('mod_scorm_get_scorm_sco_tracks') &&
-                    site.wsAvailable('mod_scorm_get_scorm_scoes') &&
-                    site.wsAvailable('mod_scorm_get_scorm_user_data') &&
-                    site.wsAvailable('mod_scorm_get_scorms_by_courses') &&
-                    site.wsAvailable('mod_scorm_insert_scorm_tracks');
-        });
+    self.isPluginEnabled = function() {
+        return  $mmSite.wsAvailable('mod_scorm_get_scorm_attempt_count') &&
+                $mmSite.wsAvailable('mod_scorm_get_scorm_sco_tracks') &&
+                $mmSite.wsAvailable('mod_scorm_get_scorm_scoes') &&
+                $mmSite.wsAvailable('mod_scorm_get_scorm_user_data') &&
+                $mmSite.wsAvailable('mod_scorm_get_scorms_by_courses') &&
+                $mmSite.wsAvailable('mod_scorm_insert_scorm_tracks');
     };
 
     /**
@@ -1179,13 +1153,10 @@ angular.module('mm.addons.mod_scorm')
      * @ngdoc method
      * @name $mmaModScorm#isScormBeingPlayed
      * @param  {Number}  scormId SCORM ID.
-     * @param {String} [siteId]  Site ID. If not defined, current site.
      * @return {Boolean}         True if it's being played, false otherwise.
      */
-    self.isScormBeingPlayed = function(scormId, siteId) {
-        siteId = siteId || $mmSite.getId();
-        return $mmSite.getId() == siteId && $state.current.name == 'site.mod_scorm-player' &&
-                        $state.params.scorm && $state.params.scorm.id == scormId;
+    self.isScormBeingPlayed = function(scormId) {
+        return $state.current.name == 'site.mod_scorm-player' && $state.params.scorm && $state.params.scorm.id == scormId;
     };
 
     /**
@@ -1288,14 +1259,14 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#isValidPackageUrl
-     * @param  {String}  packageUrl Package URL.
+     * @param  {String}  packageurl Package URL.
      * @return {Boolean}            True if valid, false otherwise.
      */
-    self.isValidPackageUrl = function(packageUrl) {
-        if (!packageUrl) {
+    self.isValidPackageUrl = function(packageurl) {
+        if (!packageurl) {
             return false;
         }
-        if (packageUrl.indexOf('imsmanifest.xml') > -1) {
+        if (packageurl.indexOf('imsmanifest.xml') > -1) {
             return false;
         }
         return true;
@@ -1307,19 +1278,15 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#logView
-     * @param {String} id       Module ID.
-     * @param {String} [siteId] Site ID. If not defined, current site.
-     * @return {Promise}        Promise resolved when the WS call is successful.
+     * @param {String} id Module ID.
+     * @return {Promise}  Promise resolved when the WS call is successful.
      */
-    self.logView = function(id, siteId) {
-        siteId = siteId || $mmSite.getId();
+    self.logView = function(id) {
         if (id) {
-            return $mmSitesManager.getSite(siteId).then(function(site) {
-                var params = {
-                    scormid: id
-                };
-                return site.write('mod_scorm_view_scorm', params);
-            });
+            var params = {
+                scormid: id
+            };
+            return $mmSite.write('mod_scorm_view_scorm', params);
         }
         return $q.reject();
     };
@@ -1330,23 +1297,19 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#logLaunchSco
-     * @param {Number} scormId  SCORM ID.
-     * @param {Number} scoId    SCO ID.
-     * @param {String} [siteId] Site ID. If not defined, current site.
-     * @return {Promise}        Promise resolved when the WS call is successful.
+     * @param {Number} scormId SCORM ID.
+     * @param {Number} scoId   SCO ID.
+     * @return {Promise}       Promise resolved when the WS call is successful.
      */
-    self.logLaunchSco = function(scormId, scoId, siteId) {
-        siteId = siteId || $mmSite.getId();
+    self.logLaunchSco = function(scormId, scoId) {
         var params = {
             scormid: scormId,
             scoid: scoId
         };
-        return $mmSitesManager.getSite(siteId).then(function(site) {
-            return site.write('mod_scorm_launch_sco', params).then(function(response) {
-                if (!response || !response.status) {
-                    return $q.reject();
-                }
-            });
+        return $mmSite.write('mod_scorm_launch_sco', params).then(function(response) {
+            if (!response || !response.status) {
+                return $q.reject();
+            }
         });
     };
 
@@ -1367,7 +1330,7 @@ angular.module('mm.addons.mod_scorm')
 
         promises.push(self.prefetchData(scorm).catch(function() {
             // If prefetchData fails we don't want to fail the whole downloaded, so we'll ignore the error for now.
-            // @todo Implement a warning system so the user knows which SCORMs have failed.
+            // TODO: Implement a warning system so the user knows which SCORMs have failed.
         }));
 
         return $q.all(promises);
@@ -1379,16 +1342,14 @@ angular.module('mm.addons.mod_scorm')
      * @module mm.addons.mod_scorm
      * @ngdoc method
      * @name $mmaModScorm#prefetchData
-     * @param {Object} scorm    SCORM object returned by $mmaModScorm#getScorm.
-     * @param {String} [siteId] Site ID. If not defined, current site.
-     * @return {Promise}        Promise resolved when the data is prefetched.
+     * @param {Object} scorm SCORM object returned by $mmaModScorm#getScorm.
+     * @return {Promise}     Promise resolved when the data is prefetched.
      */
-    self.prefetchData = function(scorm, siteId) {
-        siteId = siteId || $mmSite.getId();
+    self.prefetchData = function(scorm) {
         var promises = [];
 
         // Prefetch number of attempts (including not completed).
-        promises.push($mmaModScormOnline.getAttemptCount(siteId, scorm.id).catch(function() {
+        promises.push($mmaModScormOnline.getAttemptCount(scorm.id).catch(function() {
             // If it fails, assume we have no attempts.
             return 0;
         }).then(function(numAttempts) {
@@ -1403,7 +1364,7 @@ angular.module('mm.addons.mod_scorm')
                 }
 
                 attempts.forEach(function(attempt) {
-                    datapromises.push($mmaModScormOnline.getScormUserData(siteId, scorm.id, attempt).catch(function(err) {
+                    datapromises.push($mmaModScormOnline.getScormUserData(scorm.id, attempt).catch(function(err) {
                         // Ignore failures of all the attempts that aren't the last one.
                         if (attempt == numAttempts) {
                             return $q.reject(err);
@@ -1414,12 +1375,12 @@ angular.module('mm.addons.mod_scorm')
                 return $q.all(datapromises);
             } else {
                 // No attempts. We'll still try to get user data to be able to identify SCOs not visible and so.
-                return $mmaModScormOnline.getScormUserData(siteId, scorm.id, 0);
+                return $mmaModScormOnline.getScormUserData(scorm.id, 0);
             }
         }));
 
         // Prefetch SCOs.
-        promises.push(self.getScos(scorm.id, siteId));
+        promises.push(self.getScos(scorm.id));
 
         return $q.all(promises);
     };
@@ -1450,18 +1411,16 @@ angular.module('mm.addons.mod_scorm')
      * @param  {Boolean} offline   True if attempt is offline, false otherwise.
      * @param  {Object} scorm      SCORM.
      * @param  {Object} [userData] User data for this attempt and SCO. If not defined, it will be retrieved from DB. Recommended.
-     * @param  {String} [siteId]   Site ID. If not defined, current site.
      * @return {Promise}           Promise resolved when data is saved.
      */
-    self.saveTracks = function(scoId, attempt, tracks, offline, scorm, userData, siteId) {
-        siteId = siteId || $mmSite.getId();
+    self.saveTracks = function(scoId, attempt, tracks, offline, scorm, userData) {
         if (offline) {
-            var promise = userData ? $q.when(userData) : self.getScormUserData(scorm.id, attempt, offline, siteId);
+            var promise = userData ? $q.when(userData) : self.getScormUserData(scorm.id, attempt, offline);
             return promise.then(function(userData) {
-                return $mmaModScormOffline.saveTracks(siteId, scorm, scoId, attempt, tracks, userData);
+                return $mmaModScormOffline.saveTracks(scorm, scoId, attempt, tracks, userData);
             });
         } else {
-            return $mmaModScormOnline.saveTracks(siteId, scorm.id, scoId, attempt, tracks);
+            return $mmaModScormOnline.saveTracks(scorm.id, scoId, attempt, tracks);
         }
     };
 

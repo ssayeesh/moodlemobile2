@@ -68,7 +68,7 @@ angular.module('mm.core.login')
 
         $mmSitesManager.loadSite(siteid).then(function() {
             $ionicHistory.nextViewOptions({disableBack: true});
-            return $mmLoginHelper.goToSiteInitialPage();
+            $state.go('site.mm_courses');
         }, function(error) {
             $log.error('Error loading site '+siteid);
             error = error || 'Error loading site.';

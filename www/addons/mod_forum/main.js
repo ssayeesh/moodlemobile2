@@ -40,7 +40,7 @@ angular.module('mm.addons.mod_forum', [])
         url: '/mod_forum-discussion',
         params: {
             discussionid: null,
-            cid: null // Not naming it courseid because it collides with 'site.mod_forum' param in split-view.
+            courseid: null
         },
         views: {
             'site': {
@@ -53,7 +53,7 @@ angular.module('mm.addons.mod_forum', [])
     .state('site.mod_forum-newdiscussion', {
         url: '/mod_forum-newdiscussion',
         params: {
-            cid: null, // Not naming it courseid because it collides with 'site.mod_forum' param in split-view.
+            courseid: null,
             forumid: null,
             cmid: null
         },

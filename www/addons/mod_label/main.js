@@ -32,7 +32,6 @@ angular.module('mm.addons.mod_label', ['mm.core'])
 
 })
 
-.config(function($mmCourseDelegateProvider, $mmContentLinksDelegateProvider) {
-    $mmCourseDelegateProvider.registerContentHandler('mmaModLabel', 'label', '$mmaModLabelHandlers.courseContent');
-    $mmContentLinksDelegateProvider.registerLinkHandler('mmaModLabel', '$mmaModLabelHandlers.linksHandler');
+.config(function($mmCourseDelegateProvider) {
+    $mmCourseDelegateProvider.registerContentHandler('mmaModLabel', 'label', '$mmaModLabelCourseContentHandler');
 });

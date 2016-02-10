@@ -19,49 +19,28 @@ angular.module('mm.core')
 /**
  * Directive to create a split view layout. This directive should be used along with mm-split-view-link.
  *
- * IMPORTANT: Due to a limitation in Angular ui-router, the left pane state and the right pane state should NOT have
- * parameters with the same name but different value. It can cause unexpected behaviors.
- * Example: if the left pane loads a state with param 'courseid', then all the states that can be loaded in the right pane
- * should avoid having a parameter named 'courseid'. The right pane state can have a 'courseid' param only if it will always
- * have the same value than in left pane state.
- *
  * @module mm.core
  * @ngdoc directive
  * @name mmSplitView
  * @description
  * Usage:
- * <mm-split-view component="mmaCalendarEventsList">
+ * <mm-split-view>
  *     <!-- CONTENT TO SHOW ON THE LEFT PANEL (MENU) -->
  * </mm-split-view>
  *
  * To change the right pane contents (content pane), mmSplitViewLink directive is needed.
- * mmSplitView will automatically try to load a mmSplitViewLink when the view is loaded. This can be configured using
- * the attributes "load" and "loadWhen".
- *
- * If you don't have access to the directive's scope but you still want to configure when should the data be loaded and which
- * element should it load you can use the mmCoreSplitViewLoad event. When the directive receives this event it will try to
- * immediately load the link set (if no link is set it will load the first link found). Example:
- * $rootScope.$broadcast(mmCoreSplitViewLoad, {load: 2});
- *
- * IMPORTANT: Due to a limitation in Angular ui-router, the left pane state and the right pane state should NOT have
- * parameters with the same name but different value. It can cause unexpected behaviors.
- * Example: if the left pane loads a state with param 'courseid', then all the states that can be loaded in the right pane
- * should avoid having a parameter named 'courseid'. The right pane state can have a 'courseid' param only if it will always
- * have the same value than in left pane state.
+ * mmSplitView will try to load the first mmSplitViewLink when the view is loaded.
  *
  * Accepts the following params:
  *
  * @param {String} [menuWidth] Width of the left menu. Can be specified in pixels ('200px') or in percentage ('30%').
  *
- * @param {String} [loadWhen]  Name of a scope variable. When that variable is set to true, a mm-split-view-link will be loaded in
- *                             in the contents pane. If not set, try to load it right at the start. See "load" param.
+ * @param {String} [loadWhen]  Name of a scope variable. When that variable is set to true, the first mm-split-view-link
+ *                             found will be loaded in the contents pane. If not set, try to load it right at the start.
  *
  * @param {String} component   Component. In tablet, the new view will be named after the component.
- *
- * @param {Number} [load] Link to load. If not set then the first link will be loaded by default. If it's set then it will
- *                        try to load the nth link. E.g. load=2 will load the second link in the page.
  */
-.directive('mmSplitView', function($log, $state, $ionicPlatform, $timeout, $mmUtil, $interpolate, mmCoreSplitViewLoad) {
+.directive('mmSplitView', function($log, $state, $ionicPlatform, $timeout, $mmUtil, mmCoreSplitViewLoad) {
 
     $log = $log.getInstance('mmSplitView');
 
@@ -115,32 +94,13 @@ angular.module('mm.core')
         /**
          * Load a mm-split-view-link.
          *
-         * @param {Object} [scope]           Directive's scope.
-         * @param {String|Number} [loadAttr] Number of link to load.
-         * @param {Boolean} retrying         True if we're retrying because the function failed (link wasn't ready).
+         * @param {Boolean} retrying True if we're retrying because the function failed (link wasn't ready), false otherwise.
          */
-        this.loadLink = function(scope, loadAttr, retrying) {
+        this.loadLink = function(retrying) {
             if ($ionicPlatform.isTablet()) {
                 if (!linkToLoad) {
-                    // No link set. Let's determine if loadAttr is set and its real value.
-                    if (typeof loadAttr != 'undefined') {
-                        var position = parseInt(loadAttr);
-                        if (!position) {
-                            // Seems it's not a number. Try to interpolate it.
-                            position = parseInt($interpolate(loadAttr)(scope), 10); // "Evaluate" scope variables.
-                        }
-                        if (position) {
-                            var links = element.querySelectorAll('[mm-split-view-link]');
-                            position = position > links.length ? 0 : position - 1;
-                            linkToLoad = angular.element(links[position]);
-                        } else {
-                            // Load first link
-                            linkToLoad = angular.element(element.querySelector('[mm-split-view-link]'));
-                        }
-                    } else {
-                        // Load first link
-                        linkToLoad = angular.element(element.querySelector('[mm-split-view-link]'));
-                    }
+                    // No link set. Get first link inside the directive.
+                    linkToLoad = angular.element(element.querySelector('[mm-split-view-link]'));
                 }
 
                 if (!triggerClick(linkToLoad)) {
@@ -148,7 +108,7 @@ angular.module('mm.core')
                     if (!retrying) {
                         linkToLoad = undefined;
                         $timeout(function() {
-                            self.loadLink(scope, loadAttr, true);
+                            self.loadLink(true);
                         });
                     }
                 }
@@ -225,11 +185,11 @@ angular.module('mm.core')
                 // Load link when variable is set to true.
                 scope.$watch(attrs.loadWhen, function(newValue) {
                     if (newValue) {
-                        controller.loadLink(scope, attrs.load);
+                        controller.loadLink();
                     }
                 });
             } else {
-                controller.loadLink(scope, attrs.load);
+                controller.loadLink();
             }
 
             // Load last opened link when we re-enter the same state. We use $stateChangeSuccess instead of $ionicView.enter
@@ -237,17 +197,13 @@ angular.module('mm.core')
             scope.$on('$stateChangeSuccess', function(event, toState, toParams, fromState, fromParams) {
                 // Compare that name and params are similar. We'll only compare 1st level of params, it's not a deep compare.
                 if (toState.name === menuState && $mmUtil.basicLeftCompare(toParams, menuParams, 1)) {
-                    controller.loadLink(); // No need to pass scope and load, link should be set.
+                    controller.loadLink();
                 }
             });
 
             // Listen for event to load link.
-            scope.$on(mmCoreSplitViewLoad, function(e, data) {
-                if (data && data.load) {
-                    controller.loadLink(scope, data.load);
-                } else {
-                    controller.loadLink(scope, attrs.load);
-                }
+            scope.$on(mmCoreSplitViewLoad, function() {
+                controller.loadLink();
             });
         }
     };
